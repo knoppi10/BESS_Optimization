@@ -6,7 +6,7 @@ from entsoe import EntsoePandasClient
 # ------------------------------------------------------------------------------
 # 1. Registriere dich auf https://transparency.entsoe.eu/
 # 2. Beantrage den API Key per Mail (siehe Doku)
-API_KEY = 'DEIN_ENTSOE_API_KEY_HIER_EINFUEGEN' 
+API_KEY = 'fdecbe8e-0a99-46ac-9ed3-21bfd950ae8d' 
 
 COUNTRY_CODE = 'DE_LU'  # Bidding Zone Deutschland/Luxemburg
 START_DATE = '2019-01-01'
