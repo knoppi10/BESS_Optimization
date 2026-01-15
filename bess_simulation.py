@@ -3,6 +3,9 @@ import numpy as np
 import cvxpy as cp
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
+from scipy.stats import linregress
+from scipy.optimize import curve_fit
+from scipy.special import expit
 import os
 
 # ==========================================
@@ -27,74 +30,139 @@ class SimulationConfig:
     residual_inflection_point: float = 40000 
     
     # Steilheit des Anstiegs der S-Kurve
-    residual_sensitivity: float = 0.0001 
+    residual_sensitivity: float = 0.0001
+    # Enforce end-of-horizon SOC = 0 to prevent artificial end-of-horizon arbitrage
+    enforce_end_soc_zero: bool = True
 
 # ==========================================
 # 2. HELPER & DATEN
 # ==========================================
-def load_market_data(filepath='market_data_2019_2025.csv'):
+def load_market_data(filename='market_data_2019_2025.csv'):
     """
-    Lädt die echten Daten. Falls nicht vorhanden, generiert es Dummy-Daten
-    für Testzwecke (damit der Code immer läuft).
+    Lädt die echten Daten. Bricht ab, falls Datei nicht gefunden wird.
     """
+    # Pfad relativ zum Skript auflösen
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    filepath = os.path.join(script_dir, filename)
+
     if os.path.exists(filepath):
         print(f"Lade echte Daten aus {filepath}...")
-        df = pd.read_csv(filepath, parse_dates=['timestamp']).set_index('timestamp')
+        # Read CSV then normalize column names and parse timestamp robustly
+        df = pd.read_csv(filepath)
+        # Strip whitespace from column names (some CSVs contain padded headers)
+        df.columns = df.columns.str.strip()
+        # Parse timestamp column (robust to header variations)
+        if 'timestamp' in df.columns:
+            # Parse as UTC to handle mixed offsets, then convert
+            df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
+            df = df.set_index('timestamp')
+        else:
+            # Fallback: try first column as timestamp
+            first_col = df.columns[0]
+            try:
+                df[first_col] = pd.to_datetime(df[first_col], utc=True)
+                df = df.set_index(first_col)
+                df.index.name = 'timestamp'
+            except Exception:
+                raise ValueError(f"Keine gültige 'timestamp' Spalte in '{filepath}' gefunden.")
+        # Ensure DatetimeIndex and convert to Europe/Berlin
+        try:
+            df.index = pd.DatetimeIndex(df.index)
+        except Exception:
+            raise ValueError("Index konnte nicht in DatetimeIndex umgewandelt werden.")
+        # Wenn tz-naiv, lokalisiere nach Europe/Berlin; sonst konvertiere
+        if df.index.tz is None:
+            df.index = df.index.tz_localize('Europe/Berlin')
+        else:
+            df.index = df.index.tz_convert('Europe/Berlin')
         return df
     else:
-        print(f"WARNUNG: Datei '{filepath}' nicht gefunden. Generiere synthetische Testdaten...")
-        return _generate_dummy_data()
+        # KEINE Dummy-Daten mehr -> Harter Fehler
+        raise FileNotFoundError(f"Datei '{filepath}' nicht gefunden! Bitte führe zuerst data_fetch.py aus.")
 
-def _generate_dummy_data():
-    """Erzeugt realistische Zeitreihen für Preis, Last und Erneuerbare (Fallback)"""
-    dates = pd.date_range(start='2025-01-01', end='2025-12-31 23:00', freq='h')
-    n = len(dates)
-    
-    # Saisonales Muster + Tagesmuster + Zufall
-    t = np.arange(n)
-    
-    # Last (Winter hoch, Tag hoch)
-    load_base = 60000 + 10000 * np.cos(2*np.pi*t/(24*365)) # Jahr
-    load_day = 10000 * np.cos(2*np.pi*t/24) # Tag
-    load = load_base + load_day + np.random.normal(0, 2000, n)
-    
-    # Erneuerbare (Wind stochastisch, Solar tagsüber)
-    wind = 15000 + 10000 * np.sin(2*np.pi*t/(24*10)) + np.random.normal(0, 5000, n)
-    wind = np.maximum(wind, 0)
-    
-    solar = np.zeros(n)
-    hours = dates.hour
-    is_day = (hours >= 6) & (hours <= 20)
-    solar[is_day] = 30000 * np.sin((hours[is_day]-6)/(14)*np.pi) * np.random.uniform(0.5, 1.0, np.sum(is_day))
-    
-    renewable = wind + solar
-    residual = load - renewable
-    
-    # Preis korreliert exponentiell mit Residuallast
-    price = 20 + 0.001 * residual + 2e-9 * np.exp(residual/2500)
-    
-    return pd.DataFrame({
-        'price_da': price,
-        'load': load,
-        'generation_renewable': renewable,
-        'residual_load': residual
-    }, index=dates)
+def _sigmoid_func(x, slope_min, slope_max, inflection, sensitivity):
+    """Die Sigmoid-Funktion, die wir fitten wollen. Nutzt numerisch stabile 'expit'."""
+    z = sensitivity * (x - inflection)
+    sigmoid = expit(z)
+    return slope_min + (slope_max - slope_min) * sigmoid
 
-def calculate_fundamental_slopes(residual_load, cfg: SimulationConfig):
+def get_season(month):
+    """Ordnet einen Monat einer Jahreszeit zu."""
+    if month in [12, 1, 2]:
+        return 'Winter'
+    elif month in [3, 4, 5]:
+        return 'Frühling'
+    elif month in [6, 7, 8]:
+        return 'Sommer'
+    else: # 9, 10, 11
+        return 'Herbst'
+
+def get_seasonal_slope_parameters(df: pd.DataFrame):
+    """Ermittelt für jede Jahreszeit die Parameter der Slope-Kurve (aggregiert über alle Jahre)."""
+    print("Ermittle saisonale Slope-Parameter aus den Daten...")
+    df['season'] = df.index.month.map(get_season)
+    seasonal_params = {}
+    
+    for season in ['Winter', 'Frühling', 'Sommer', 'Herbst']:
+        season_df = df[df['season'] == season].copy()
+        
+        # Binning der Daten
+        min_load, max_load = season_df['residual_load'].min(), season_df['residual_load'].max()
+        bins = np.arange(min_load, max_load + 2000, 2000)
+        season_df['load_bin'] = pd.cut(season_df['residual_load'], bins=bins, right=False)
+        
+        empirical_points = []
+        for bin_interval, group in season_df.groupby('load_bin'):
+            if len(group) < 30: continue
+            regression = linregress(x=group['residual_load'], y=group['price_da'])
+            empirical_points.append({'residual_load': bin_interval.mid, 'slope': regression.slope})
+        
+        if not empirical_points: continue
+        
+        empirical_df = pd.DataFrame(empirical_points)
+        
+        # Constrain parameters to reasonable ranges to avoid pathological fits
+        lower_bounds = [0.0, 0.0, 0.0, 1e-12]
+        upper_bounds = [0.1, 1.0, 1e6, 1.0]
+        try:
+            popt, _ = curve_fit(_sigmoid_func, empirical_df['residual_load'], empirical_df['slope'], 
+                                p0=[0.001, 0.05, 40000, 0.0001], bounds=(lower_bounds, upper_bounds), maxfev=10000)
+            # Validate fitted params
+            if not np.isfinite(popt).all() or popt[1] <= 0 or popt[3] <= 0:
+                print(f"  - Warnung: Ungültiger Fit für {season}, verworfen")
+                seasonal_params[season] = None
+            else:
+                seasonal_params[season] = popt
+                print(f"  - Saison {season}: Inflection ~{popt[2]:.0f} MW, Max Slope {popt[1]:.4f}")
+        except RuntimeError:
+            print(f"  - Warnung: Fit fehlgeschlagen für {season}")
+            seasonal_params[season] = None
+            
+    return seasonal_params
+
+def calculate_seasonal_slopes(residual_load: pd.Series, seasonal_params: dict):
     """
-    Kernfunktion des Fundamentalmodells:
-    Wandelt Residuallast (MW) in Preissensitivität/Slope (€/MW) um.
+    Berechnet die stündlichen Slopes basierend auf den saisonalen Parametern.
     """
-    x = residual_load.values
+    slopes = pd.Series(index=residual_load.index, dtype=float)
+    seasons_map = residual_load.index.month.map(get_season)
     
-    # Logistische Funktion (Sigmoid)
-    # Normiert x um den Wendepunkt.
-    # Ergebnis ist ein Wert zwischen 0 und 1, der angibt, wie "angespannt" das Netz ist.
-    sigmoid = 1 / (1 + np.exp(-cfg.residual_sensitivity * (x - cfg.residual_inflection_point)))
-    
-    # Skalieren auf den Bereich [min, max]
-    slopes = cfg.slope_min + (cfg.slope_max - cfg.slope_min) * sigmoid
-    
+    for season, params in seasonal_params.items():
+        if params is None: continue # Skip if fitting failed
+        
+        season_mask = (seasons_map == season)
+        if not season_mask.any(): continue
+        
+        x = residual_load[season_mask].values
+        slopes.loc[season_mask] = _sigmoid_func(x, *params)
+
+    # Lücken füllen
+    if slopes.isna().any():
+        slopes = slopes.ffill().bfill()
+
+    # Prevent negative or pathologically large slopes (which break convexity assumptions)
+    slopes = slopes.clip(lower=0.0, upper=1.0)
+
     return slopes
 
 # ==========================================
@@ -107,7 +175,10 @@ class BessOptimizer:
         self.capacity = capacity_mwh
         self.power = capacity_mwh * config.c_rate
         self.cfg = config
-        self.slopes = hourly_slopes
+        # Ensure numpy arrays and correct shapes for CVXPY operations
+        self.slopes = np.asarray(hourly_slopes)
+        if self.slopes.shape[0] != self.T:
+            raise ValueError(f"hourly_slopes length ({self.slopes.shape[0]}) does not match number of timesteps ({self.T})")
         
         # Speicher für Ergebnisse
         self.charge = None
@@ -126,6 +197,9 @@ class BessOptimizer:
             constraints.append(c[t] >= 0); constraints.append(c[t] <= self.power)
             constraints.append(d[t] >= 0); constraints.append(d[t] <= self.power)
             constraints.append(s[t+1] >= 0); constraints.append(s[t+1] <= self.capacity)
+        # Optional: erzwinge Endzustand = 0 zur Vermeidung von Arbitrage über das Ende des Horizons
+        if self.cfg.enforce_end_soc_zero:
+            constraints.append(s[self.T] == 0)
         return constraints
 
     def solve_exogenous(self):
@@ -138,12 +212,14 @@ class BessOptimizer:
         s = cp.Variable(self.T + 1)
         
         # Zielfunktion: Maximiere (Entladen - Laden)*Preis - HurdleCosts
-        revenue = (d - c) @ self.prices
-        costs = (d + c) * self.cfg.hurdle_rate
+        revenue = cp.sum(cp.multiply(d - c, self.prices))
+        costs = cp.sum((d + c) * self.cfg.hurdle_rate)
         
         prob = cp.Problem(cp.Maximize(revenue - costs), self._get_common_constraints(c, d, s))
         prob.solve(solver=cp.ECOS) # ECOS ist schnell und robust für LP
-        
+        if prob.status not in ["optimal", "optimal_inaccurate"]:
+            print(f"Warnung: Solver gab Status {prob.status} zurück (Exogenes Modell)")
+
         self._save_results(c, d, s)
         self._calc_financials(self.prices) # Erlös auf Basis der historischen Preise
 
@@ -158,7 +234,7 @@ class BessOptimizer:
         s = cp.Variable(self.T + 1)
         
         # Basis-Umsatz (linear)
-        base_rev = (d - c) @ self.prices
+        base_rev = cp.sum(cp.multiply(d - c, self.prices))
         
         # Preis-Impact-Strafe (Quadratisch)
         # Formel: Slope[t] * (Discharge[t] - Charge[t])^2
@@ -166,12 +242,24 @@ class BessOptimizer:
         # cp.multiply erlaubt elementweise Multiplikation mit dem stündlichen Slope-Vektor (Fundamentalmodell)
         impact_penalty = cp.sum(cp.multiply(self.slopes, cp.square(net_discharge)))
         
-        costs = (d + c) * self.cfg.hurdle_rate
+        costs = cp.sum((d + c) * self.cfg.hurdle_rate)
         
         # Wir maximieren (Umsatz - Strafe - Kosten)
         # Das ist ein konkaves Problem (leicht lösbar), da wir den quadratischen Term abziehen
         prob = cp.Problem(cp.Maximize(base_rev - impact_penalty - costs), self._get_common_constraints(c, d, s))
-        prob.solve(solver=cp.OSQP) # OSQP ist spezialisiert auf Quadratische Programme
+        try:
+            prob.solve(solver=cp.OSQP) # OSQP ist spezialisiert auf Quadratische Programme
+            if prob.status not in ["optimal", "optimal_inaccurate"]:
+                print(f"Warnung: Solver gab Status {prob.status} zurück (Endogenes Modell)")
+        except Exception as e:
+            print(f"Fehler beim Lösen des endogenen Problems: {e}")
+            # Leave results empty and return to allow the simulation to continue
+            self.charge = np.zeros(self.T)
+            self.discharge = np.zeros(self.T)
+            self.soc = np.zeros(self.T + 1)
+            self.revenue = float('nan')
+            self.cycles = 0
+            return
         
         self._save_results(c, d, s)
         
@@ -212,11 +300,11 @@ def run_simulation():
         if 'load' in df.columns and 'generation_renewable' in df.columns:
             df['residual_load'] = df['load'] - df['generation_renewable']
         else:
-            print("ACHTUNG: Keine Last/Erzeugungsdaten gefunden. Nutze Preis-Heuristik für Residuallast.")
-            df['residual_load'] = df['price_da'] * 500 # Sehr grober Proxy
+            raise ValueError("Fehlende Spalten: 'load' oder 'generation_renewable' nicht in den Daten gefunden.")
         
-    # Slope berechnen (Fundamentalmodell)
-    hourly_slopes = calculate_fundamental_slopes(df['residual_load'], cfg)
+    # Saisonale Slope-Parameter fitten und stündliche Slopes berechnen
+    seasonal_params = get_seasonal_slope_parameters(df)
+    hourly_slopes = calculate_seasonal_slopes(df['residual_load'], seasonal_params)
     
     # 3. Szenarien (Batteriegrößen in MWh)
     capacities = [0, 100, 500, 1000, 2000, 5000]
@@ -244,7 +332,14 @@ def run_simulation():
         rev_en = opt_endo.revenue
         delta = (rev_en - rev_ex) / rev_ex * 100 if rev_ex != 0 else 0
         
-        results.append({'cap': cap, 'ex': rev_ex, 'en': rev_en})
+        results.append({
+            'capacity_mwh': cap,
+            'revenue_exogenous': rev_ex,
+            'revenue_endogenous': rev_en,
+            'delta_percent': delta,
+            'cycles_exogenous': opt_exo.cycles,
+            'cycles_endogenous': opt_endo.cycles
+        })
         print(f"{cap:<15} | {rev_ex:,.0f}         | {rev_en:,.0f}         | {delta:.2f}%")
         
         # Daten für Plot speichern (vom größten Szenario)
@@ -257,57 +352,48 @@ def run_simulation():
             plot_data['ops_exo'] = (opt_exo.discharge - opt_exo.charge)[s]
             plot_data['ops_endo'] = (opt_endo.discharge - opt_endo.charge)[s]
 
+    # Ergebnisse als CSV speichern
+    results_df = pd.DataFrame(results)
+    output_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'simulation_results.csv')
+    results_df.to_csv(output_path, index=False)
+    print(f"\nErgebnisse wurden gespeichert in: {output_path}")
+
     # 4. Visualisierung
     plot_results(results, plot_data, cfg)
 
 def plot_results(results, plot_data, cfg):
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 14))
+    # Wir reduzieren die Plots auf die wesentlichen Ergebnisse
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [2, 3]})
     
     # Plot 1: Revenue Decay (Kannibalisierung)
-    caps = [r['cap'] for r in results]
-    ex = [r['ex']/1e6 for r in results] # in Mio €
-    en = [r['en']/1e6 for r in results]
+    caps = [r['capacity_mwh'] for r in results]
+    ex = [r['revenue_exogenous']/1e6 for r in results] # in Mio €
+    en = [r['revenue_endogenous']/1e6 for r in results]
     
-    ax1.plot(caps, ex, 'o--', label='Exogen (Price Taker)', color='grey')
-    ax1.plot(caps, en, 'o-', label='Endogen (Price Maker)', color='#1f77b4', linewidth=2)
+    ax1.plot(caps, ex, 'o--', label='Exogen (Price Taker)', color='grey', alpha=0.7)
+    ax1.plot(caps, en, 'o-', label='Endogen (Price Maker)', color='#1f77b4', linewidth=2.5)
     ax1.set_title('Kannibalisierungseffekt: Umsatzrückgang bei steigender Kapazität')
-    ax1.set_ylabel('Jahreserlös (Mio. €)')
+    ax1.set_ylabel('Gesamterlös (Mio. €)')
     ax1.set_xlabel('Installierte Kapazität (MWh)')
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # Plot 2: Fundamentalmodell (Residual Load vs Slope)
-    # Wir sortieren die Daten für einen sauberen Linienplot der S-Kurve
-    res_sorted = np.sort(plot_data['residual'])
-    # Sigmoid Funktion neu berechnen für glatte Linie im Plot
-    x_smooth = np.linspace(min(plot_data['residual']), max(plot_data['residual']), 100)
-    sig_smooth = 1 / (1 + np.exp(-cfg.residual_sensitivity * (x_smooth - cfg.residual_inflection_point)))
-    slope_smooth = cfg.slope_min + (cfg.slope_max - cfg.slope_min) * sig_smooth
-    
-    ax2.plot(x_smooth, slope_smooth, color='red', linewidth=2, label='Slope-Funktion (Modell)')
-    ax2.scatter(plot_data['residual'], plot_data['slopes'], alpha=0.3, s=10, color='black', label='Stundenwerte (Woche 1)')
-    ax2.set_title('Fundamentalmodell: Ableitung der Preissensitivität (Slope) aus Residuallast')
-    ax2.set_xlabel('Residuallast (MW) [Last - Wind - Solar]')
-    ax2.set_ylabel('Slope (€/MW Impact)')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    
-    # Plot 3: Operations (Vergleich Strategie)
-    ax3.plot(plot_data['prices'], color='grey', alpha=0.3, label='Marktpreis (Historisch)')
-    ax3_twin = ax3.twinx()
+    # Plot 2: Operations (Vergleich Strategie)
+    ax2.plot(plot_data['prices'], color='grey', alpha=0.3, label='Marktpreis (Historisch)')
+    ax2_twin = ax2.twinx()
     
     # Exogen handelt aggressiv (Ignoriert Preisimpact)
-    ax3_twin.fill_between(range(168), plot_data['ops_exo'], color='grey', alpha=0.3, label='Exogen (Aggressiv)')
+    ax2_twin.fill_between(range(168), plot_data['ops_exo'], color='grey', alpha=0.3, label='Exogen (Aggressiv)')
     # Endogen handelt strategisch (Glättet Spitzen um Preis nicht zu zerstören)
-    ax3_twin.plot(plot_data['ops_endo'], color='green', linewidth=2, label='Endogen (Strategisch)')
+    ax2_twin.plot(plot_data['ops_endo'], color='green', linewidth=2, label='Endogen (Strategisch)')
     
-    ax3.set_ylabel('Preis (€/MWh)')
-    ax3_twin.set_ylabel('Netto-Entladung (MW)')
-    ax3.set_title('Handelsverhalten Woche 1: Strategische Zurückhaltung bei hohem Volumen')
+    ax2.set_ylabel('Preis (€/MWh)')
+    ax2_twin.set_ylabel('Netto-Entladung (MW)')
+    ax2.set_title('Handelsverhalten Woche 1: Strategische Zurückhaltung bei hohem Volumen')
     
-    lines, labels = ax3.get_legend_handles_labels()
-    lines2, labels2 = ax3_twin.get_legend_handles_labels()
-    ax3.legend(lines + lines2, labels + labels2, loc='upper left')
+    lines, labels = ax2.get_legend_handles_labels()
+    lines2, labels2 = ax2_twin.get_legend_handles_labels()
+    ax2.legend(lines + lines2, labels + labels2, loc='upper left')
     
     plt.tight_layout()
     plt.show()

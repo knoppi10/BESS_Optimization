@@ -1,4 +1,5 @@
 import pandas as pd
+import os
 from entsoe import EntsoePandasClient
 
 # ------------------------------------------------------------------------------
@@ -10,11 +11,11 @@ API_KEY = 'fdecbe8e-0a99-46ac-9ed3-21bfd950ae8d'
 
 COUNTRY_CODE = 'DE_LU'  # Bidding Zone Deutschland/Luxemburg
 START_DATE = '2019-01-01'
-END_DATE = '2025-01-01'
+END_DATE = '2025-12-31'
 TIMEZONE = 'Europe/Berlin'
 
 def fetch_and_process_data():
-    if API_KEY == 'DEIN_ENTSOE_API_KEY_HIER_EINFUEGEN':
+    if API_KEY == '0':
         raise ValueError("Bitte trage deinen echten ENTSO-E API Key im Skript ein.")
 
     print(f"Verbinde zu ENTSO-E Client...")
@@ -63,7 +64,9 @@ def fetch_and_process_data():
     df['residual_load'] = df['load'] - df['generation_renewable']
 
     # Speichern
-    filename = 'market_data_2019_2025.csv'
+    # Speichert die Datei im gleichen Ordner wie dieses Skript
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    filename = os.path.join(script_dir, 'market_data_2019_2025.csv')
     df.index.name = 'timestamp'
     df.to_csv(filename)
     print(f"Fertig! Daten gespeichert in: {filename}")

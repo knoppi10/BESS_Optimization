@@ -1,4 +1,3 @@
 # Virtual Environments ausschließen
 venv/
 BESS/
-.DS_Store/
