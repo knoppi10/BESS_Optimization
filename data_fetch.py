@@ -1,3 +1,11 @@
+# @CELIA Data Fetch Script for ENTSO-E Market Data
+# This script fetches day-ahead prices, load, and renewable generation data
+# from the ENTSO-E Transparency Platform using the EntsoePandasClient.
+# It processes the data to compute residual load and saves the final dataset
+# to a CSV file for further analysis.
+
+
+
 import pandas as pd
 import os
 from entsoe import EntsoePandasClient

@@ -1,3 +1,9 @@
+# @CELIA BESS Simulation Script
+# This script simulates the operation of a Battery Energy Storage System (BESS)
+# OTIMIZER muss noch angepasst werden
+# Ergebnis soll ein Vektor mit stündlichen Entscheidungen sein
+
+
 import pandas as pd
 import numpy as np
 import cvxpy as cp

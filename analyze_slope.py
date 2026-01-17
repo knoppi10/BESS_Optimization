@@ -1,3 +1,9 @@
+# @CELIA Slope Analysis Script
+# This script analyzes the market slope based on historical market data.
+# Failed, not sure about the result, big enough for a single thesis
+# Annahme 10% Steigung des Angebotskurve
+
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,6 +23,9 @@ def load_data(filepath='market_data_2019_2025.csv'):
     # 1. Einlesen ohne sofortigen Index-Wechsel
     # 'utf-8-sig' hilft, falls versteckte Zeichen (BOM) am Anfang der Datei stehen
     df = pd.read_csv(filepath, encoding='utf-8-sig')
+    
+    # Remove whitespace from column names
+    df.columns = df.columns.str.strip()
 
     # 2. Umwandlung in Datetime (während es noch eine Spalte ist)
     # utc=True erkennt dein +02:00 Format automatisch
