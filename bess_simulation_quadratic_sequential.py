@@ -13,11 +13,11 @@ warnings.filterwarnings('ignore')
 # ==========================================
 @dataclass
 class SimulationConfig:
-    efficiency_charge: float = 0.92
-    efficiency_discharge: float = 0.92
+    efficiency_charge: float = 0.9592
+    efficiency_discharge: float = 0.9592
     c_rate: float = 0.25  # HIER ÄNDERN: C-Rate
     hurdle_rate: float = 5.0  # €/MWh Opportunitätskosten
-    slope: float = 0.01  # HIER ÄNDERN: Slope (Price Impact)
+    slope: float = 0.05  # HIER ÄNDERN: Slope (Price Impact)
     enforce_end_soc_zero: bool = True
 
 # ==========================================
@@ -65,85 +65,82 @@ def load_market_data(filename='market_data_2019_2025.csv'):
 # ==========================================
 class BessOptimizerQuadratic:
     def __init__(self, capacity_mwh, config: SimulationConfig):
-        """Quadratisches Optimierungsproblem mit OSQP - Matrizen werden einmal gebaut"""
-        self.T = 8760  # Stunden pro Jahr
+        """Quadratisches Optimierungsproblem mit OSQP. Matrizen werden JIT pro Jahr gebaut."""
         self.capacity = capacity_mwh
-        self.power = capacity_mwh * config.c_rate
         self.cfg = config
+        # Die Matrizen werden nicht mehr im Konstruktor gebaut, um variable Jahreslängen zu erlauben.
+
+    def solve_year(self, prices, enforce_end_soc_zero=False, initial_soc=0.0):
+        """Löst das Optimierungsproblem für ein einzelnes Jahr mit variabler Länge."""
         
-        # ===== MATRIZEN EINMAL BAUEN (werden wiederverwendet) =====
-        T = self.T
+        T = len(prices)
+        if T == 0:
+            # Wenn keine Preisdaten vorhanden sind, gibt es nichts zu tun.
+            return np.array([]), np.array([]), np.array([initial_soc]), 0.0, 0.0, initial_soc
+
         alpha = self.cfg.slope
+        power = self.capacity * self.cfg.c_rate
         
-        # Hesse-Matrix (CSC)
-        self.P = sparse.diags([2.0 * alpha] * T, format='csc')
+        # === Matrizen und Vektoren dynamisch für die Jahreslänge T bauen ===
         
-        # SoC-Matrix L: Lower triangular (direkt sparse aufbauen!)
+        # 1. Hesse-Matrix (P) für die quadratische Kostenfunktion und Preis-Vektor (q)
+        P = sparse.diags([2.0 * alpha] * T, format='csc')
+        q = -prices.copy()
+        
+        # 2. Constraint-Matrizen (A)
+        # L-Matrix für die kumulative Summe des SoC
         row = np.repeat(np.arange(T), np.arange(1, T + 1))
         col = np.concatenate([np.arange(i + 1) for i in range(T)])
         data = np.ones(len(row))
         L = sparse.csc_matrix((data, (row, col)), shape=(T, T))
         
+        # Einheitsmatrix I für die Power-Grenzen
         I = sparse.eye(T, format='csc')
         
-        # Stack constraints (ohne SoC end constraint - wird später hinzugefügt)
-        self.A_base = sparse.vstack([-L, L, I], format='csc')
-        
-        self.l_base = np.hstack([
-            -np.inf * np.ones(T),
-            np.zeros(T),
-            -self.power * np.ones(T)
-        ])
-        
-        self.u_base = np.hstack([
-            np.zeros(T),
-            self.capacity * np.ones(T),
-            self.power * np.ones(T)
-        ])
+        # A-Matrix: Stapelt die SoC- und Power-Constraints
+        A = sparse.vstack([L, I], format='csc')
 
-    def solve_year(self, prices, enforce_end_soc_zero=False, initial_soc=0.0):
-        """Löse für ein einzelnes Jahr mit aktualisierten Preisen"""
-        T = self.T
-        alpha = self.cfg.slope
-        power = self.capacity * self.cfg.c_rate  # ← DYNAMISCH berechnen!
+        # 3. Lower (l) und Upper (u) Bounds für die Constraints
+        # SoC-Grenzen: 0 <= initial_soc + cumsum(x) <= capacity
+        # Dies wird umgeformt zu: -initial_soc <= cumsum(x) <= capacity - initial_soc
+        l_soc = -initial_soc * np.ones(T)
+        u_soc = (self.capacity - initial_soc) * np.ones(T)
         
-        # Preise als Vektor
-        q = -prices.copy()
+        # Power-Grenzen: -power <= x <= power
+        l_power = -power * np.ones(T)
+        u_power = power * np.ones(T)
         
-        # Constraints kopieren
-        A = self.A_base.copy()
-        l = self.l_base.copy()
-        u = self.u_base.copy()
-        
-        # Power-Constraints dynamisch anpassen
-        l[2*T:3*T] = -power * np.ones(T)
-        u[2*T:3*T] = power * np.ones(T)
-        
-        # End-SoC Constraint: Optional
+        # Bounds-Vektoren zusammensetzen
+        l = np.hstack([l_soc, l_power])
+        u = np.hstack([u_soc, u_power])
+
+        # Optional: Erzwinge, dass der SoC am Ende des Zeitraums 0 ist.
         if enforce_end_soc_zero:
+            # Damit der absolute SoC am Ende 0 ist, muss gelten: initial_soc + sum(x) = 0
+            # Also muss die Summe aller Entscheidungen `sum(x)` gleich `-initial_soc` sein.
             A_end = sparse.csc_matrix(np.ones((1, T)))
             A = sparse.vstack([A, A_end], format='csc')
-            l = np.hstack([l, 0.0])
-            u = np.hstack([u, 0.0])
+            
+            target_sum = -initial_soc
+            l = np.hstack([l, target_sum])
+            u = np.hstack([u, target_sum])
         
-        # Initial-SoC Constraint: Erste Stunde muss = initial_soc sein
-        A_init = sparse.csc_matrix(np.zeros((1, T)))
-        A_init[0, 0] = 1.0
-        A = sparse.vstack([A, A_init], format='csc')
-        l = np.hstack([l, initial_soc])
-        u = np.hstack([u, initial_soc])
-        
+        # === OSQP Solver Setup und Lösung ===
         try:
             solver = osqp.OSQP()
-            solver.setup(P=self.P, q=q, A=A, l=l, u=u, verbose=False, 
+            solver.setup(P=P, q=q, A=A, l=l, u=u, verbose=False, 
                          eps_abs=1e-2, eps_rel=1e-2, max_iter=4000)
             res = solver.solve()
+            
+            if res.info.status != 'solved':
+                raise ValueError(f"OSQP konnte nicht lösen. Status: {res.info.status}")
+
         except Exception as e:
-            print(f"  Fehler: {e}")
-            return np.zeros(T), np.zeros(T), np.zeros(T + 1), 0.0, 0.0, 0.0
+            print(f"  Fehler bei der OSQP-Lösung: {e}")
+            return np.zeros(T), np.zeros(T), np.full(T + 1, initial_soc), 0.0, 0.0, initial_soc
         
-        # Results
-        x_opt = res.x if res.x is not None else np.zeros(T)
+        # === Ergebnisse verarbeiten ===
+        x_opt = res.x
         soc = np.concatenate([[initial_soc], initial_soc + np.cumsum(x_opt)])
         
         cashflow = x_opt * prices
@@ -297,7 +294,7 @@ def plot_results_multiyear(results, aggregated_results, timestamps, year_data, c
     axes[0].grid(True, alpha=0.3, axis='y')
     
     # Plot 2: Full timeline (alle 6 Jahre)
-    prices = np.array([year_data[year]['price_da'].values for year in sorted(year_data.keys())])
+    prices = np.concatenate([year_data[year]['price_da'].values for year in sorted(year_data.keys())])
     prices = np.concatenate(prices)
     
     ax2a = axes[1]

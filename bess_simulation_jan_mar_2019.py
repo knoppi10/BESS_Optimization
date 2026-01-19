@@ -15,9 +15,9 @@ warnings.filterwarnings('ignore')
 class SimulationConfig:
     efficiency_charge: float = 0.92
     efficiency_discharge: float = 0.92
-    c_rate: float = 0.2 # HIER ÄNDERN: C-Rate
+    c_rate: float = 0.2  # Standardwert
     hurdle_rate: float = 5.0  # €/MWh Opportunitätskosten
-    slope: float = 0.05  # HIER ÄNDERN: Slope (Price Impact)
+    slope: float = 0.05  # Standardwert
     enforce_end_soc_zero: bool = True
 
 # ==========================================
@@ -117,7 +117,7 @@ class BessOptimizerQuadratic:
         return discharge, charge, soc, revenue, cycles
 
 # ==========================================
-# 4. REFAKTOISIERTE SIMULATIONSFUNKTIONEN
+# 4. REFAKTORISIERTE SIMULATIONSFUNKTIONEN
 # ==========================================
 
 def run_single_simulation(cfg: SimulationConfig, df: pd.DataFrame, verbose=True):
@@ -157,8 +157,8 @@ def run_single_simulation(cfg: SimulationConfig, df: pd.DataFrame, verbose=True)
 
 def run_parameter_study():
     """
-    Führt eine Parameterstudie durch, indem C-Rate, Slope und Hurdle Rate variiert werden.
-    Vergleicht die Ergebnisse mit einer Baseline-Konfiguration.
+    Führt eine Parameterstudie durch und stellt die prozentuale Auswirkung auf den Erlös
+    für jedes Szenario in einer Pivot-Tabelle dar.
     """
     # 1. Daten laden und vorbereiten
     df = load_market_data()
@@ -182,45 +182,59 @@ def run_parameter_study():
     
     print("\nStarte Parameterstudie...")
     for study_name, cfg in configs_to_test:
-        print(f"\n===== LAUFE STUDIE: {study_name.upper()} =====")
-        # Für die Studie selbst weniger Output in der Konsole
-        revenue_summary = run_single_simulation(cfg, df, verbose=False) 
+        print(f"  ...berechne Studie: {study_name}")
+        revenue_summary = run_single_simulation(cfg, df, verbose=False)
         
-        # Repräsentatives Szenario 'L' (100 MWh) für den Vergleich heranziehen
-        l_scenario_result = next((item for item in revenue_summary if item['Szenario'] == 'L'), None)
-        l_scenario_revenue = l_scenario_result['Erlös (€)'] if l_scenario_result else 0.0
+        for result in revenue_summary:
+            all_study_results.append({
+                'Studie': study_name,
+                'Szenario': result['Szenario'],
+                'Kapazität (MWh)': result['Kapazität (MWh)'],
+                'Erlös (€)': result['Erlös (€)']
+            })
 
-        all_study_results.append({
-            'Studie': study_name,
-            'C-Rate': cfg.c_rate,
-            'Slope': cfg.slope,
-            'Hurdle Rate': cfg.hurdle_rate,
-            'Erlös (Szenario L, €)': l_scenario_revenue,
-        })
-
-    # 3. Ergebnisse zusammenfassen und ausgeben
+    # 3. Ergebnisse in einem DataFrame zusammenfassen und auswerten
     results_df = pd.DataFrame(all_study_results)
-    
-    baseline_revenue = results_df.loc[results_df['Studie'] == 'Baseline', 'Erlös (Szenario L, €)'].iloc[0]
-    if baseline_revenue != 0:
-        results_df['Impact vs Baseline (%)'] = ((results_df['Erlös (Szenario L, €)'] - baseline_revenue) / baseline_revenue) * 100
-    else:
-        results_df['Impact vs Baseline (%)'] = 0.0
 
-    print("\n\n" + "="*80)
-    print("ERGEBNISSE DER PARAMETERSTUDIE (Vergleich mit Szenario 'L', 100 MWh)")
-    print("="*80)
-    print(results_df.to_string(index=False))
-    print("="*80)
+    # Baseline-Erlöse für jedes Szenario ermitteln
+    baseline_revenues = results_df[results_df['Studie'] == 'Baseline'].set_index('Szenario')['Erlös (€)'].to_dict()
+
+    # Baseline-Erlös auf den DataFrame mappen
+    results_df['Baseline Erlös (€)'] = results_df['Szenario'].map(baseline_revenues)
+
+    # Prozentuale Abweichung berechnen
+    results_df['Impact vs Baseline (%)'] = 0.0
+    non_zero_mask = results_df['Baseline Erlös (€)'] != 0
+    results_df.loc[non_zero_mask, 'Impact vs Baseline (%)'] = ((results_df['Erlös (€)'] - results_df['Baseline Erlös (€)']) / results_df['Baseline Erlös (€)']) * 100
+
+    # Pivot-Tabelle für die prozentuale Auswirkung erstellen
+    impact_pivot = results_df.pivot_table(
+        index='Studie', 
+        columns='Szenario', 
+        values='Impact vs Baseline (%)'
+    )
+
+    # Spalten- und Zeilenreihenfolge für bessere Lesbarkeit anpassen
+    scenarios_order = ['Ex', 'S', 'M', 'L', 'XL']
+    study_order = [c[0] for c in configs_to_test]
+    impact_pivot = impact_pivot[scenarios_order]
+    impact_pivot = impact_pivot.reindex(study_order)
+
+
+    print("\n\n" + "="*90)
+    print("PROZENTUALE AUSWIRKUNG DER PARAMETERÄNDERUNGEN AUF DEN ERLÖS (im Vergleich zur Baseline)")
+    print("="*90)
+    print(impact_pivot.to_string(float_format="%.2f%%"))
+    print("="*90)
 
     # 4. Ergebnisse in CSV speichern
-    study_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'parameter_study_summary.csv')
-    results_df.to_csv(study_path, index=False, float_format='%.2f')
-    print(f"\nStudien-Ergebnisse gespeichert in: {study_path}")
+    study_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'parameter_study_impact_summary.csv')
+    impact_pivot.to_csv(study_path, float_format='%.2f')
+    print(f"\nDetailergebnisse der Studie gespeichert in: {study_path}")
 
 def plot_results(results, results_dict, df, cfg):
     """Platzhalter für Plots, wird in der Studie nicht direkt verwendet."""
-    pass # In dieser Version nicht aktiv genutzt, um die Ausgabe übersichtlich zu halten.
+    pass
 
 if __name__ == "__main__":
     run_parameter_study()
