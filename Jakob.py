@@ -73,7 +73,7 @@ class SimulationConfig:
 
     c_rate: float = 0.25  # C-Rate (0.25 = 4-Stunden-Batterie)
     hurdle_rate: float = 7.0  # €/MWh Durchsatz (Degradations-/Opportunitätskosten)
-    slope: float = 0.05  # Price Impact Parameter α [€/(MW²·h)] - DEFAULT für S, M, L, XL
+    slope: float = 0.01  # Price Impact Parameter α [€/(MW²·h)] - DEFAULT für S, M, L, XL
     enforce_end_soc_zero: bool = True  # End-SOC = 0 am Ende des Horizonts
     debug: bool = False
 

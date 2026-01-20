@@ -223,15 +223,9 @@ def print_summary(summary):
 # ==========================================
 def plot_cost_breakdown(summary):
     """
-    Two plots:
-    1. Simple bar chart: Net profit in €/MWh capacity (shows scale effects)
-    2. Stacked bar chart in % of energy revenue
+    Cost breakdown plot: Stacked bar chart in % of energy revenue
     """
     scenarios = list(summary.keys())
-    
-    # Berechne €/MWh Kapazität
-    netto_per_mwh = []
-    zyklen = []
     
     # Berechne Prozentanteile
     netto_pct = []
@@ -240,16 +234,7 @@ def plot_cost_breakdown(summary):
     impact_pct = []
     
     for scenario in scenarios:
-        capacity = summary[scenario]['Kapazität (MWh)']
         erlös = summary[scenario]['Energieerlös (€)']
-        
-        # €/MWh Kapazität (Netto-Gewinn)
-        if capacity > 0:
-            netto_per_mwh.append(summary[scenario]['Netto-Gewinn (€)'] / capacity)
-        else:
-            netto_per_mwh.append(0)
-        
-        zyklen.append(summary[scenario]['Zyklen'])
         
         # Prozent
         if erlös > 0:
@@ -263,73 +248,60 @@ def plot_cost_breakdown(summary):
             eff_pct.append(0)
             netto_pct.append(0)
     
-    # Figure mit 2 Subplots
-    fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+    # Single plot
+    fig, ax = plt.subplots(figsize=(12, 7), facecolor='white')
+    ax.set_facecolor('white')
     
     x = np.arange(len(scenarios))
     width = 0.6
     
-    # ===== PLOT 1: Simple bar chart - Net Profit €/MWh =====
-    ax1 = axes[0]
-    
-    bars = ax1.bar(x, netto_per_mwh, width, color='#2ecc71', edgecolor='black')
-    
-    ax1.set_ylabel('Net Profit (€ / MWh Capacity)')
-    ax1.set_xlabel('Scenario')
-    ax1.set_title('Arbitrage Revenue per MWh Capacity (6 Years, 2019-2024)')
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(scenarios)
-    ax1.grid(True, alpha=0.3, axis='y')
-    
-    # Write values above bars
-    for i, (bar, val, cyc) in enumerate(zip(bars, netto_per_mwh, zyklen)):
-        ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 500, 
-                f'{val:,.0f} €/MWh\n({cyc:.0f} Cycles)', 
-                ha='center', va='bottom', fontsize=10, fontweight='bold')
-    
-    # Y-axis some space at top
-    ax1.set_ylim(0, max(netto_per_mwh) * 1.15)
-    
-    # ===== PLOT 2: Percent =====
-    ax2 = axes[1]
-    
-    ax2.bar(x, netto_pct, width, label='Net Profit', color='#2ecc71')
-    ax2.bar(x, eff_pct, width, bottom=netto_pct, label='Efficiency Losses', color='#e67e22')
-    ax2.bar(x, hurdle_pct, width, bottom=np.array(netto_pct)+np.array(eff_pct), 
-            label='Hurdle Costs', color='#3498db')
-    ax2.bar(x, impact_pct, width, 
+    # Gray shades for costs (to distinguish from battery size colors)
+    # Net Profit stays green, costs in graduated grays (light to dark)
+    ax.bar(x, netto_pct, width, label='Net Profit', color='#2ecc71')
+    ax.bar(x, eff_pct, width, bottom=netto_pct, label='Efficiency Losses', color='#b0b0b0')  # Light gray
+    ax.bar(x, hurdle_pct, width, bottom=np.array(netto_pct)+np.array(eff_pct), 
+            label='Hurdle Costs', color='#707070')  # Medium gray
+    ax.bar(x, impact_pct, width, 
             bottom=np.array(netto_pct)+np.array(eff_pct)+np.array(hurdle_pct),
-            label='Price Impact', color='#e74c3c')
+            label='Price Impact', color='#404040')  # Dark gray
     
-    ax2.set_ylabel('Share of Energy Revenue (%)')
-    ax2.set_xlabel('Scenario')
-    ax2.set_title('Cost Breakdown by Scenario (% of Gross Energy Revenue)')
-    ax2.set_xticks(x)
-    ax2.set_xticklabels(scenarios)
-    ax2.set_ylim(0, 105)
-    ax2.axhline(y=100, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
-    ax2.legend(loc='upper right')
+    ax.set_ylabel('Share of Energy Revenue (%)', fontsize=12)
+    ax.set_xlabel('Scenario', fontsize=12)
+    ax.set_title('Cost Breakdown by Scenario (% of Gross Energy Revenue)\n2019-2024', fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(scenarios, fontsize=11)
+    ax.set_ylim(0, 105)
+    ax.axhline(y=100, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
+    ax.legend(loc='upper right', fontsize=10)
+    ax.grid(True, alpha=0.3, axis='y')
     
     # Prozentwerte in die Balken schreiben
     for i, scenario in enumerate(scenarios):
         # Netto-Gewinn
         if netto_pct[i] > 5:
-            ax2.text(i, netto_pct[i]/2, f'{netto_pct[i]:.1f}%', ha='center', va='center', 
-                    fontsize=9, fontweight='bold', color='white')
+            ax.text(i, netto_pct[i]/2, f'{netto_pct[i]:.1f}%', ha='center', va='center', 
+                    fontsize=10, fontweight='bold', color='white')
         # Effizienz
         if eff_pct[i] > 5:
-            ax2.text(i, netto_pct[i] + eff_pct[i]/2, f'{eff_pct[i]:.1f}%', ha='center', va='center',
-                    fontsize=9, color='white')
+            ax.text(i, netto_pct[i] + eff_pct[i]/2, f'{eff_pct[i]:.1f}%', ha='center', va='center',
+                    fontsize=10, color='white')
         # Hurdle
         if hurdle_pct[i] > 5:
-            ax2.text(i, netto_pct[i] + eff_pct[i] + hurdle_pct[i]/2, f'{hurdle_pct[i]:.1f}%', 
-                    ha='center', va='center', fontsize=9, color='white')
+            ax.text(i, netto_pct[i] + eff_pct[i] + hurdle_pct[i]/2, f'{hurdle_pct[i]:.1f}%', 
+                    ha='center', va='center', fontsize=10, color='white')
         # Price Impact
         if impact_pct[i] > 5:
-            ax2.text(i, netto_pct[i] + eff_pct[i] + hurdle_pct[i] + impact_pct[i]/2, 
-                    f'{impact_pct[i]:.1f}%', ha='center', va='center', fontsize=9, color='white')
+            ax.text(i, netto_pct[i] + eff_pct[i] + hurdle_pct[i] + impact_pct[i]/2, 
+                    f'{impact_pct[i]:.1f}%', ha='center', va='center', fontsize=10, color='white')
     
     plt.tight_layout()
+    
+    # Save as PNG
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_path = os.path.join(script_dir, 'cost_breakdown.png')
+    plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+    print(f"\n✓ Plot gespeichert: {output_path}")
+    
     plt.show()
     
     return fig
