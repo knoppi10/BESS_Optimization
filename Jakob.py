@@ -42,6 +42,12 @@ import multiprocessing as mp
 warnings.filterwarnings('ignore')
 
 # ==========================================
+# 0. KONSTANTEN
+# ==========================================
+MARKET_DATA_FILE = 'market_data_2019_2025.csv'
+YEARS = [2019, 2020, 2021, 2022, 2023, 2024]
+
+# ==========================================
 # 1. KONFIGURATION
 # ==========================================
 @dataclass
@@ -61,14 +67,14 @@ class SimulationConfig:
     """
 
     # Ziel-Rundreiseeffizienz (η_rt). Einzelwirkungsgrade werden in __post_init__ gesetzt.
-    roundtrip_efficiency: float = 0.92
+    roundtrip_efficiency: float = 0.85
     efficiency_charge: Optional[float] = None
     efficiency_discharge: Optional[float] = None
 
     c_rate: float = 0.25  # C-Rate (0.25 = 4-Stunden-Batterie)
-    hurdle_rate: float = 30.0  # €/MWh Durchsatz (Degradations-/Opportunitätskosten)
-    slope: float = 0.01  # Price Impact Parameter alpha [€/(MW^2*h)] (weil impact = alpha * dt[h] * (net_power[MW])^2)
-    enforce_end_soc_zero: bool = True  # Zyklisch: End-SOC = Start-SOC
+    hurdle_rate: float = 7.0  # €/MWh Durchsatz (Degradations-/Opportunitätskosten)
+    slope: float = 0.05  # Price Impact Parameter α [€/(MW²·h)] - DEFAULT für S, M, L, XL
+    enforce_end_soc_zero: bool = True  # End-SOC = 0 am Ende des Horizonts
     debug: bool = False
 
     def __post_init__(self):
@@ -88,11 +94,25 @@ class SimulationConfig:
         else:
             raise ValueError("Bitte entweder beide Einzelwirkungsgrade setzen oder keine (dann wird roundtrip_efficiency verwendet).")
 
+
+# Szenarien: {Name: (Kapazität_MWh, slope)}
+# "Ex" = Exogen/Price Taker → slope = 0 (kein Markteinfluss)
+# Alle anderen: slope aus SimulationConfig
+SCENARIOS = {
+    'Ex': (4, 0.0),
+    'S':  (10, SimulationConfig().slope),
+    'M':  (100, SimulationConfig().slope),
+    'L':  (1000, SimulationConfig().slope),
+    'XL': (10000, SimulationConfig().slope)
+}
+
 # ==========================================
 # 2. DATEN LADEN
 # ==========================================
-def load_market_data(filename='market_data_2019_2025.csv'):
+def load_market_data(filename=None):
     """Lädt die echten Daten."""
+    if filename is None:
+        filename = MARKET_DATA_FILE
     script_dir = os.path.dirname(os.path.abspath(__file__))
     filepath = os.path.join(script_dir, filename)
 
@@ -306,17 +326,14 @@ class BessOptimizerQuadratic:
         constraint_u.append(initial_soc)
         constraint_idx += 1
         
-        # 5. End SOC: soc_T = soc_0 (zyklisch) - effizient als COO aufbauen
+        # 5. End SOC: soc_T = 0 (absolut null am Ende des Horizonts)
         if enforce_end_soc_zero:
             soc_T_idx = 2 * T + T
             constraint_rows.append(constraint_idx)
             constraint_cols.append(soc_T_idx)
             constraint_data.append(1.0)  # soc_T
-            constraint_rows.append(constraint_idx)
-            constraint_cols.append(soc_0_idx)
-            constraint_data.append(-1.0)  # -soc_0
             constraint_l.append(0.0)
-            constraint_u.append(0.0)  # Gleichheitsconstraint
+            constraint_u.append(0.0)  # soc_T = 0
             constraint_idx += 1
         
         # Baue Constraint-Matrix aus COO-Format (effizient)
@@ -483,54 +500,45 @@ def run_simulation():
     )
     
     # 4. In einzelne Jahre chunken (2019-2024)
-    years = [2019, 2020, 2021, 2022, 2023, 2024]
     year_data = {}
     
     print("Chunke Daten in einzelne Jahre...")
-    for year in years:
+    for year in YEARS:
         mask = df.index.year == year
         year_df = df[mask]
         if len(year_df) > 0:
             year_data[year] = year_df
             print(f"  {year}: {len(year_df)} Zeitschritte")
     
-    # 4. Szenarien
-    scenarios = {
-        'Ex': 5,
-        'S': 10,
-        'M': 50,
-        'L': 100,
-        'XL': 1000
-    }
+    # 5. Szenarien (aus globalen Konstanten)
+    print(f"\nStarte Multi-Jahr Simulation ({YEARS[0]}-{YEARS[-1]}, {len(SCENARIOS)} Szenarien) - PARALLELISIERT...")
+    print(f"Verwende {mp.cpu_count()} CPU-Kerne")
+    print(f"{'Szenario':<10} | {'Gesamterlös (€)':<20} | {'Erlös/MWh':<14} | {'Zyklen':<10}")
+    print("-" * 65)
     
-    # 5. Parallele Optimierung aller Szenarien
+    # Initialisiere Ergebnis-Container HIER
     aggregated_results = {}
     revenue_summary = []
     
-    print(f"\nStarte Multi-Jahr Simulation (2019-2024, 5 Szenarien) - PARALLELISIERT...")
-    print(f"Verwende {mp.cpu_count()} CPU-Kerne")
-    print(f"{'Szenario':<10} | {'Gesamterlös (€)':<20} | {'Zyklen':<15}")
-    print("-" * 50)
-    
     # Vorbereitung der Arguments für Worker
-    scenario_items = list(scenarios.items())
-    
-    # Config als Dictionary (serialisierbar - dataclass ist nicht direkt picklable)
-    cfg_dict = {
-        'roundtrip_efficiency': cfg.roundtrip_efficiency,
-        'efficiency_charge': None,
-        'efficiency_discharge': None,
-        'c_rate': cfg.c_rate,
-        'hurdle_rate': cfg.hurdle_rate,
-        'slope': cfg.slope,
-        'enforce_end_soc_zero': cfg.enforce_end_soc_zero
-    }
+    # SCENARIOS enthält jetzt (capacity, slope) Tuples
+    scenario_items = list(SCENARIOS.items())  # [(name, (capacity, slope)), ...]
     
     # year_data kann direkt übergeben werden (pandas DataFrames sind picklable)
-    pool_args = [
-        (scenario_name, capacity, year_data, years, cfg_dict, dt_hours)
-        for scenario_name, capacity in scenario_items
-    ]
+    pool_args = []
+    for scenario_name, (capacity, slope) in scenario_items:
+        # Config als Dictionary (serialisierbar - dataclass ist nicht direkt picklable)
+        # WICHTIG: slope ist szenario-spezifisch! (Ex=0, andere=DEFAULT_SLOPE)
+        cfg_dict = {
+            'roundtrip_efficiency': cfg.roundtrip_efficiency,
+            'efficiency_charge': None,
+            'efficiency_discharge': None,
+            'c_rate': cfg.c_rate,
+            'hurdle_rate': cfg.hurdle_rate,
+            'slope': slope,  # Szenario-spezifischer slope!
+            'enforce_end_soc_zero': cfg.enforce_end_soc_zero
+        }
+        pool_args.append((scenario_name, capacity, year_data, YEARS, cfg_dict, dt_hours))
     
     # Parallele Ausführung mit Progress Bar
     num_workers = min(len(scenario_items), mp.cpu_count())
@@ -549,23 +557,30 @@ def run_simulation():
                 try:
                     result = future.result()
                     
-                    # Ergebnisse speichern
-                    aggregated_results[result['scenario_name']] = result['all_decisions']
-                    revenue_summary.append({
-                        'Szenario': result['scenario_name'],
-                        'Kapazität (MWh)': result['capacity'],
-                        'Gesamterlös (€)': result['total_revenue'],
-                        'Zyklen': result['total_cycles'],
-                        'Finale_SoC': result['final_soc']
-                    })
-                    
-                    # Ergebnis ausgeben
-                    tqdm.write(f"{result['scenario_name']:<10} | "
-                             f"{result['total_revenue']:>18,.0f}   | "
-                             f"{result['total_cycles']:>13.2f}")
+                    # Ergebnisse speichern - nutze die initialisierte Variable
+                    if result:  # Prüfe ob result valid ist
+                        aggregated_results[result['scenario_name']] = result['all_decisions']
+                        # Berechne Erlös pro MWh Kapazität
+                        erloes_pro_mwh = result['total_revenue'] / result['capacity'] if result['capacity'] > 0 else 0
+                        revenue_summary.append({
+                            'Szenario': result['scenario_name'],
+                            'Kapazität (MWh)': result['capacity'],
+                            'Gesamterlös (€)': result['total_revenue'],
+                            'Erlös/MWh (€/MWh)': erloes_pro_mwh,
+                            'Zyklen': result['total_cycles'],
+                            'Finale_SoC': result['final_soc']
+                        })
+                        
+                        # Ergebnis ausgeben
+                        tqdm.write(f"{result['scenario_name']:<10} | "
+                                 f"{result['total_revenue']:>18,.0f}   | "
+                                 f"{erloes_pro_mwh:>12,.0f}   | "
+                                 f"{result['total_cycles']:>10.2f}")
                     
                 except Exception as e:
                     tqdm.write(f"Fehler bei Szenario {scenario_name}: {e}")
+                    import traceback
+                    traceback.print_exc()
                 finally:
                     pbar.update(1)
     
@@ -583,7 +598,7 @@ def run_simulation():
     
     output_df = pd.DataFrame({
         'timestamp': all_timestamps,
-        **{scenario: aggregated_results[scenario] for scenario in scenarios.keys()}
+        **{scenario: aggregated_results[scenario] for scenario in SCENARIOS.keys()}
     })
     output_df.set_index('timestamp', inplace=True)
     
@@ -602,7 +617,7 @@ def run_simulation():
     
     # 8. Tabelle in Konsole ausgeben
     print("\n" + "="*75)
-    print("MULTI-JAHR ARBITRAGE-ZUSAMMENFASSUNG (2019-2024)")
+    print(f"MULTI-JAHR ARBITRAGE-ZUSAMMENFASSUNG ({YEARS[0]}-{YEARS[-1]})")
     print("="*75)
     print(revenue_df.to_string(index=False))
     print("="*75)
@@ -611,37 +626,35 @@ def run_simulation():
     plot_results_multiyear(revenue_summary, aggregated_results, all_timestamps, year_data, cfg)
 
 def plot_results_multiyear(results, aggregated_results, timestamps, year_data, cfg):
-    fig, axes = plt.subplots(2, 1, figsize=(16, 10))
+    fig, ax = plt.subplots(1, 1, figsize=(16, 6))
     
-    # Plot 1: Revenue by capacity
-    scenarios = [r['Szenario'] for r in results]
-    revenues = [r['Gesamterlös (€)'] / 1e6 for r in results]
+    # Only show January 2019
+    jan_2019 = year_data[2019]
+    jan_mask = jan_2019.index.month == 1
+    jan_data = jan_2019[jan_mask]
+    jan_prices = jan_data['price_da'].values
+    jan_hours = len(jan_prices)
     
-    axes[0].bar(scenarios, revenues, color='steelblue', alpha=0.7, edgecolor='black')
-    axes[0].set_title('Gesamterlös nach Batteriegröße (Multi-Jahr 2019-2024)')
-    axes[0].set_xlabel('Szenario')
-    axes[0].set_ylabel('Erlös (Mio. €)')
-    axes[0].grid(True, alpha=0.3, axis='y')
+    # Timestamps for x-axis
+    jan_timestamps = jan_data.index
     
-    # Plot 2: Full timeline (alle 6 Jahre)
-    # Jahre haben unterschiedliche Längen, daher concatenate statt array
-    prices = np.concatenate([year_data[year]['price_da'].values for year in sorted(year_data.keys())])
-    
-    ax2a = axes[1]
+    ax2a = ax
     ax2b = ax2a.twinx()
     
-    ax2a.plot(prices, color='grey', linewidth=1.5, label='Marktpreis', zorder=5, alpha=0.8)
+    ax2a.plot(range(jan_hours), jan_prices, color='grey', linewidth=1.5, label='$p_t$ (Day-Ahead Price)', zorder=5, alpha=0.8)
     
-    # Plot für jedes Szenario
+    # Plot for each scenario (only January 2019)
     colors = {'Ex': 'blue', 'S': 'green', 'M': 'orange', 'L': 'red', 'XL': 'purple'}
     for scenario, color in colors.items():
         if scenario in aggregated_results:
-            ax2b.plot(aggregated_results[scenario], alpha=0.4, label=scenario, color=color, linewidth=0.8)
+            # Only the first jan_hours values (January 2019)
+            scenario_data = aggregated_results[scenario][:jan_hours]
+            ax2b.plot(range(jan_hours), scenario_data, alpha=0.6, label=f'{scenario}: $d_t - c_t$', color=color, linewidth=1.0)
     
-    ax2a.set_xlabel('Stunde (6 Jahre: 2019-2024)')
-    ax2a.set_ylabel('Marktpreis (€/MWh)', color='grey')
-    ax2b.set_ylabel('Netto-Entladung (MW)')
-    ax2a.set_title('6-Jahres Timeline: Marktpreis vs. Handelsverhalten')
+    ax2a.set_xlabel('Hour $t$ (January 2019)')
+    ax2a.set_ylabel('Day-Ahead Price $p_t$ (€/MWh)', color='grey')
+    ax2b.set_ylabel('Net Power $d_t - c_t$ (MW)')
+    ax2a.set_title('January 2019: Day-Ahead Price vs. Trading Decisions')
     ax2a.tick_params(axis='y', labelcolor='grey')
     ax2a.grid(True, alpha=0.3)
     
@@ -653,4 +666,4 @@ def plot_results_multiyear(results, aggregated_results, timestamps, year_data, c
     plt.show()
 
 if __name__ == "__main__":
-    run_simulation()
+    run_simulation()    
