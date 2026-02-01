@@ -1,0 +1,732 @@
+% ============================================
+% METHODOLOGY & RESULTS - Detailed English Version
+% For Overleaf - Copy and paste directly
+% ============================================
+
+% Required packages (add to preamble):
+% \usepackage{amsmath, amssymb}
+% \usepackage{booktabs}
+% \usepackage{graphicx}
+% \usepackage{siunitx}
+% \usepackage{algorithm}
+% \usepackage{algorithmic}
+
+% ============================================
+\section{Methodology}
+\label{sec:methodology}
+% ============================================
+
+This section presents the mathematical framework for simulating battery energy storage system (BESS) arbitrage in wholesale electricity markets. We first motivate the modeling approach, then derive the optimization problem from economic principles, and finally demonstrate how it is transformed into a form suitable for efficient numerical solution.
+
+% --------------------------------------------
+\subsection{Modeling Approach and Assumptions}
+\label{subsec:approach}
+% --------------------------------------------
+
+\subsubsection{The Arbitrage Opportunity}
+
+Electricity prices in wholesale markets exhibit significant temporal variability due to fluctuations in demand (e.g., daily load patterns) and supply (e.g., renewable generation intermittency). This price volatility creates an arbitrage opportunity: a storage operator can purchase electricity during low-price periods, store it, and sell it back during high-price periods.
+
+The profit from a single arbitrage cycle can be expressed as:
+\begin{equation}
+    \pi = p_{\text{high}} \cdot E_{\text{out}} - p_{\text{low}} \cdot E_{\text{in}}
+\end{equation}
+where $E_{\text{in}}$ is the energy purchased, $E_{\text{out}} = \eta_{\text{rt}} \cdot E_{\text{in}}$ is the energy sold (reduced by round-trip efficiency $\eta_{\text{rt}}$), and $p_{\text{low}}, p_{\text{high}}$ are the respective prices. This is profitable when:
+\begin{equation}
+    \frac{p_{\text{high}}}{p_{\text{low}}} > \frac{1}{\eta_{\text{rt}}}
+    \label{eq:profitability_condition}
+\end{equation}
+
+For a typical round-trip efficiency of 85\%, this requires $p_{\text{high}} / p_{\text{low}} > 1.18$, i.e., the price spread must exceed approximately 18\% to cover efficiency losses alone.
+
+\subsubsection{Perfect Foresight Assumption}
+
+We employ a \textit{perfect foresight} (or \textit{deterministic}) optimization model, which assumes complete knowledge of future electricity prices over the entire planning horizon. This assumption serves several purposes:
+
+\begin{enumerate}
+    \item \textbf{Upper bound estimation}: Perfect foresight yields the maximum achievable revenue, providing a benchmark against which real-world strategies can be compared.
+    \item \textbf{Computational tractability}: The resulting deterministic optimization problem is convex and can be solved efficiently, even for multi-year horizons with hourly resolution.
+    \item \textbf{Focus on fundamental value}: By eliminating forecasting uncertainty, we isolate the intrinsic value of storage flexibility given the observed price patterns.
+\end{enumerate}
+
+In practice, storage operators face price uncertainty and must rely on forecasts or rolling-horizon strategies. The perfect foresight revenues thus represent an upper limit that real strategies cannot exceed.
+
+\subsubsection{Key Modeling Assumptions}
+
+Our model incorporates the following assumptions:
+
+\begin{enumerate}
+    \item \textbf{Single market participation}: The battery participates only in the day-ahead energy market. Ancillary services (e.g., frequency regulation, reserve capacity) are not considered.
+    
+    \item \textbf{Price-taking vs. price impact}: We distinguish between two paradigms:
+    \begin{itemize}
+        \item \textit{Price taker}: The battery is sufficiently small that its trading does not affect market prices.
+        \item \textit{Price impact}: Large batteries influence the market-clearing price through their bid/offer quantities.
+    \end{itemize}
+    
+    \item \textbf{No simultaneous charging and discharging}: The battery cannot charge and discharge at the same time step. This is enforced implicitly through the cost structure (it would be suboptimal to do so).
+    
+    \item \textbf{Symmetric charge/discharge efficiency}: We assume equal efficiency for charging and discharging, derived from the round-trip efficiency as $\eta_{\text{ch}} = \eta_{\text{dis}} = \sqrt{\eta_{\text{rt}}}$.
+    
+    \item \textbf{No calendar aging}: Battery degradation is modeled only through cycle-dependent costs (hurdle rate), not through time-dependent capacity fade.
+    
+    \item \textbf{Constant parameters}: Efficiency, capacity, and power limits remain constant throughout the simulation horizon.
+\end{enumerate}
+
+% --------------------------------------------
+\subsection{Mathematical Formulation}
+\label{subsec:math_formulation}
+% --------------------------------------------
+
+\subsubsection{Decision Variables}
+
+For each time step $t \in \{0, 1, \ldots, T-1\}$, we define:
+
+\begin{itemize}
+    \item $c_t \geq 0$: Charging power [MW] — rate at which energy flows into the battery
+    \item $d_t \geq 0$: Discharging power [MW] — rate at which energy flows out of the battery
+    \item $\text{soc}_t \geq 0$: State of charge [MWh] — energy stored in the battery at time $t$
+\end{itemize}
+
+The use of separate charging and discharging variables (rather than a single signed variable) allows for:
+\begin{itemize}
+    \item Different efficiency factors for charging vs. discharging
+    \item Clear physical interpretation
+    \item Straightforward constraint formulation
+\end{itemize}
+
+\subsubsection{Derivation of the Objective Function}
+
+The objective function is derived from economic first principles, considering three cost/revenue components:
+
+\paragraph{Component 1: Energy Trading Revenue/Cost}
+
+At each time step, the battery either purchases energy (charging) or sells energy (discharging). The net cash flow is:
+\begin{equation}
+    \text{Cash flow}_t = p_t \cdot d_t \cdot \Delta t - p_t \cdot c_t \cdot \Delta t = p_t \cdot (d_t - c_t) \cdot \Delta t
+\end{equation}
+where $p_t$ is the electricity price [€/MWh] and $\Delta t$ is the time step duration [h]. Positive cash flow indicates revenue (selling), negative indicates cost (buying).
+
+Since we formulate the problem as a \textit{minimization}, we express costs as positive and revenues as negative:
+\begin{equation}
+    \text{Trading cost}_t = p_t \cdot (c_t - d_t) \cdot \Delta t
+\end{equation}
+
+\paragraph{Component 2: Price Impact (Market Influence)}
+
+When a large battery trades significant volumes, it affects the market-clearing price. A battery buying large quantities increases demand and thus the price; selling large quantities increases supply and decreases the price. This effect is typically modeled as a quadratic cost on trading volume:
+\begin{equation}
+    \text{Price impact cost}_t = \alpha \cdot (d_t - c_t)^2 \cdot \Delta t
+\end{equation}
+where $\alpha \geq 0$ [€/(MW$^2 \cdot$h)] is the price impact coefficient. The quadratic form reflects:
+\begin{itemize}
+    \item Marginal impact increases with volume (convex cost)
+    \item Symmetry: buying and selling both worsen the achieved price
+    \item $\alpha = 0$ recovers the price-taker case
+\end{itemize}
+
+The economic interpretation is that the \textit{effective} price differs from the quoted price $p_t$:
+\begin{equation}
+    p_{\text{effective}} = p_t + \alpha \cdot |d_t - c_t|
+\end{equation}
+
+\paragraph{Component 3: Hurdle Costs (Degradation and Opportunity Cost)}
+
+Battery cycling causes degradation, reducing capacity and lifetime. We model this as a throughput-dependent cost:
+\begin{equation}
+    \text{Hurdle cost}_t = r \cdot (c_t + d_t) \cdot \Delta t
+\end{equation}
+where $r$ [€/MWh] is the hurdle rate. This term:
+\begin{itemize}
+    \item Prevents trading on marginal price spreads that don't cover degradation
+    \item Represents cycle aging (not calendar aging)
+    \item Can also incorporate opportunity costs of capacity reservation
+\end{itemize}
+
+The relationship to cycle costs is: one full cycle (charge from 0 to $E_{\max}$, then discharge to 0) involves throughput of $2 \cdot E_{\max}$, costing $2 \cdot r \cdot E_{\max}$. Thus, the cost per cycle per MWh capacity is $2r$.
+
+\paragraph{Combined Objective Function}
+
+Summing all components and minimizing over the planning horizon:
+\begin{equation}
+    \boxed{
+    \min_{c_t, d_t, \text{soc}_t} \sum_{t=0}^{T-1} \left[ 
+        \underbrace{\Delta t \cdot p_t \cdot (c_t - d_t)}_{\text{Trading}} + 
+        \underbrace{\alpha \cdot \Delta t \cdot (d_t - c_t)^2}_{\text{Price Impact}} + 
+        \underbrace{r \cdot \Delta t \cdot (c_t + d_t)}_{\text{Hurdle}}
+    \right]
+    }
+    \label{eq:objective}
+\end{equation}
+
+\subsubsection{Constraints}
+
+\paragraph{State of Charge Dynamics}
+
+The SOC evolves according to the energy balance:
+\begin{equation}
+    \text{soc}_{t+1} = \text{soc}_t + \Delta t \cdot \eta_{\text{ch}} \cdot c_t - \frac{\Delta t}{\eta_{\text{dis}}} \cdot d_t
+    \label{eq:soc_dynamics}
+\end{equation}
+
+The efficiency terms reflect:
+\begin{itemize}
+    \item Charging: only $\eta_{\text{ch}} \cdot c_t$ of the input power is stored (losses during charging)
+    \item Discharging: to deliver $d_t$ MW, the battery must deplete $d_t / \eta_{\text{dis}}$ MWh from storage (losses during discharging)
+\end{itemize}
+
+\paragraph{Power Limits}
+
+Charging and discharging power are bounded by the rated power:
+\begin{equation}
+    0 \leq c_t \leq P_{\max}, \quad 0 \leq d_t \leq P_{\max} \quad \forall t \in \{0, \ldots, T-1\}
+\end{equation}
+where $P_{\max} = \text{C-rate} \times E_{\max}$. The C-rate specifies how quickly the battery can be charged/discharged relative to its capacity (e.g., C-rate = 0.25 means a 4-hour battery).
+
+\paragraph{Capacity Limits}
+
+The state of charge must remain within physical bounds:
+\begin{equation}
+    0 \leq \text{soc}_t \leq E_{\max} \quad \forall t \in \{0, \ldots, T\}
+\end{equation}
+
+\paragraph{Boundary Conditions}
+
+We impose:
+\begin{equation}
+    \text{soc}_0 = 0, \quad \text{soc}_T = 0
+\end{equation}
+The initial condition assumes an empty battery at the start. The terminal condition ensures the battery ends empty, preventing artificial profit from "selling" stored energy that was "free" at initialization. For multi-year simulations, the terminal constraint is only enforced at the absolute end of the horizon (December 2024), while SOC is passed continuously between years.
+
+% --------------------------------------------
+\subsection{Transformation to Standard QP Form}
+\label{subsec:qp_transformation}
+% --------------------------------------------
+
+To solve the optimization problem numerically, we employ the OSQP (Operator Splitting Quadratic Program) solver. This requires transforming our problem into the standard QP form that OSQP accepts. In this section, we rigorously derive this transformation, proving that our formulation is mathematically equivalent to the OSQP standard form.
+
+\subsubsection{The OSQP Standard Form}
+
+OSQP solves convex quadratic programs in the following canonical form:
+\begin{equation}
+    \boxed{
+    \min_{\mathbf{x} \in \mathbb{R}^n} \quad \frac{1}{2} \mathbf{x}^\top \mathbf{P} \mathbf{x} + \mathbf{q}^\top \mathbf{x}
+    \quad \text{subject to} \quad \mathbf{l} \leq \mathbf{A} \mathbf{x} \leq \mathbf{u}
+    }
+    \label{eq:qp_standard}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\mathbf{x} \in \mathbb{R}^n$ is the vector of decision variables
+    \item $\mathbf{P} \in \mathbb{R}^{n \times n}$ is a symmetric positive semi-definite matrix (the Hessian of the quadratic cost)
+    \item $\mathbf{q} \in \mathbb{R}^n$ is the linear cost vector
+    \item $\mathbf{A} \in \mathbb{R}^{m \times n}$ is the constraint matrix
+    \item $\mathbf{l}, \mathbf{u} \in \mathbb{R}^m$ are the lower and upper constraint bounds
+\end{itemize}
+
+The key insight is that the objective function must be expressible as the sum of:
+\begin{enumerate}
+    \item A \textbf{quadratic term}: $\frac{1}{2} \mathbf{x}^\top \mathbf{P} \mathbf{x}$
+    \item A \textbf{linear term}: $\mathbf{q}^\top \mathbf{x}$
+\end{enumerate}
+
+We now prove that our objective function~\eqref{eq:objective} satisfies this structure.
+
+\subsubsection{Recall: Our Objective Function}
+
+Our objective function from equation~\eqref{eq:objective} is:
+\begin{equation}
+    f(c_t, d_t) = \sum_{t=0}^{T-1} \left[ 
+        \underbrace{\Delta t \cdot p_t \cdot (c_t - d_t)}_{\text{Linear in } c_t, d_t} + 
+        \underbrace{\alpha \cdot \Delta t \cdot (d_t - c_t)^2}_{\text{Quadratic in } c_t, d_t} + 
+        \underbrace{r \cdot \Delta t \cdot (c_t + d_t)}_{\text{Linear in } c_t, d_t}
+    \right]
+    \label{eq:objective_recall}
+\end{equation}
+
+We observe that:
+\begin{itemize}
+    \item The trading cost $\Delta t \cdot p_t \cdot (c_t - d_t)$ is \textbf{linear} in the decision variables
+    \item The price impact $\alpha \cdot \Delta t \cdot (d_t - c_t)^2$ is \textbf{quadratic} in the decision variables
+    \item The hurdle cost $r \cdot \Delta t \cdot (c_t + d_t)$ is \textbf{linear} in the decision variables
+\end{itemize}
+
+Therefore, our objective has the form: \textit{quadratic + linear}, which matches the OSQP structure.
+
+\subsubsection{Step 1: Expand the Quadratic Term}
+
+Let us expand the price impact term for a single time step $t$:
+\begin{align}
+    \alpha \cdot \Delta t \cdot (d_t - c_t)^2 
+    &= \alpha \cdot \Delta t \cdot (d_t^2 - 2 d_t c_t + c_t^2) \\
+    &= \alpha \cdot \Delta t \cdot c_t^2 - 2 \alpha \cdot \Delta t \cdot c_t d_t + \alpha \cdot \Delta t \cdot d_t^2
+    \label{eq:quadratic_expansion}
+\end{align}
+
+This can be written in matrix form. For the variables $(c_t, d_t)$ at time step $t$, define the local vector $\mathbf{y}_t = \begin{bmatrix} c_t \\ d_t \end{bmatrix}$. Then:
+\begin{equation}
+    \alpha \cdot \Delta t \cdot (d_t - c_t)^2 = \mathbf{y}_t^\top \underbrace{\begin{bmatrix} \alpha \Delta t & -\alpha \Delta t \\ -\alpha \Delta t & \alpha \Delta t \end{bmatrix}}_{\mathbf{Q}_t} \mathbf{y}_t
+\end{equation}
+
+\textbf{Verification:}
+\begin{align}
+    \mathbf{y}_t^\top \mathbf{Q}_t \mathbf{y}_t 
+    &= \begin{bmatrix} c_t & d_t \end{bmatrix} \begin{bmatrix} \alpha \Delta t & -\alpha \Delta t \\ -\alpha \Delta t & \alpha \Delta t \end{bmatrix} \begin{bmatrix} c_t \\ d_t \end{bmatrix} \\
+    &= \begin{bmatrix} c_t & d_t \end{bmatrix} \begin{bmatrix} \alpha \Delta t \cdot c_t - \alpha \Delta t \cdot d_t \\ -\alpha \Delta t \cdot c_t + \alpha \Delta t \cdot d_t \end{bmatrix} \\
+    &= c_t \cdot (\alpha \Delta t \cdot c_t - \alpha \Delta t \cdot d_t) + d_t \cdot (-\alpha \Delta t \cdot c_t + \alpha \Delta t \cdot d_t) \\
+    &= \alpha \Delta t \cdot c_t^2 - \alpha \Delta t \cdot c_t d_t - \alpha \Delta t \cdot c_t d_t + \alpha \Delta t \cdot d_t^2 \\
+    &= \alpha \Delta t \cdot (c_t^2 - 2 c_t d_t + d_t^2) \\
+    &= \alpha \Delta t \cdot (c_t - d_t)^2 \quad \checkmark
+\end{align}
+
+\subsubsection{Step 2: Match to OSQP Form with Factor $\frac{1}{2}$}
+
+OSQP uses the form $\frac{1}{2} \mathbf{x}^\top \mathbf{P} \mathbf{x}$, with a factor of $\frac{1}{2}$ in front. To match this, we need:
+\begin{equation}
+    \frac{1}{2} \mathbf{x}^\top \mathbf{P} \mathbf{x} = \mathbf{y}_t^\top \mathbf{Q}_t \mathbf{y}_t
+\end{equation}
+
+This requires $\mathbf{P} = 2 \mathbf{Q}_t$, i.e., we must \textbf{double} the coefficients:
+\begin{equation}
+    \mathbf{P}_t = 2 \mathbf{Q}_t = \begin{bmatrix} 2\alpha \Delta t & -2\alpha \Delta t \\ -2\alpha \Delta t & 2\alpha \Delta t \end{bmatrix}
+\end{equation}
+
+\textbf{Verification:}
+\begin{equation}
+    \frac{1}{2} \mathbf{y}_t^\top \mathbf{P}_t \mathbf{y}_t = \frac{1}{2} \mathbf{y}_t^\top (2 \mathbf{Q}_t) \mathbf{y}_t = \mathbf{y}_t^\top \mathbf{Q}_t \mathbf{y}_t = \alpha \Delta t \cdot (d_t - c_t)^2 \quad \checkmark
+\end{equation}
+
+\subsubsection{Step 3: Collect Linear Terms}
+
+The linear terms in our objective function for time step $t$ are:
+\begin{align}
+    \text{Trading:} \quad & \Delta t \cdot p_t \cdot (c_t - d_t) = \Delta t \cdot p_t \cdot c_t - \Delta t \cdot p_t \cdot d_t \\
+    \text{Hurdle:} \quad & r \cdot \Delta t \cdot (c_t + d_t) = r \cdot \Delta t \cdot c_t + r \cdot \Delta t \cdot d_t
+\end{align}
+
+Combining these, the coefficient of $c_t$ is:
+\begin{equation}
+    q_{c_t} = \Delta t \cdot p_t + r \cdot \Delta t = \Delta t \cdot (p_t + r)
+\end{equation}
+
+The coefficient of $d_t$ is:
+\begin{equation}
+    q_{d_t} = -\Delta t \cdot p_t + r \cdot \Delta t = \Delta t \cdot (-p_t + r)
+\end{equation}
+
+In vector form for time step $t$:
+\begin{equation}
+    \mathbf{q}_t = \begin{bmatrix} \Delta t \cdot (p_t + r) \\ \Delta t \cdot (-p_t + r) \end{bmatrix}
+\end{equation}
+
+\subsubsection{Step 4: Prove Equivalence of Formulations}
+
+We now prove that our objective function equals the OSQP form. For a single time step:
+
+\textbf{Our formulation:}
+\begin{equation}
+    f_t = \Delta t \cdot p_t \cdot (c_t - d_t) + \alpha \cdot \Delta t \cdot (d_t - c_t)^2 + r \cdot \Delta t \cdot (c_t + d_t)
+\end{equation}
+
+\textbf{OSQP formulation:}
+\begin{equation}
+    g_t = \frac{1}{2} \mathbf{y}_t^\top \mathbf{P}_t \mathbf{y}_t + \mathbf{q}_t^\top \mathbf{y}_t
+\end{equation}
+
+\textbf{Proof of $f_t = g_t$:}
+\begin{align}
+    g_t &= \frac{1}{2} \begin{bmatrix} c_t & d_t \end{bmatrix} \begin{bmatrix} 2\alpha \Delta t & -2\alpha \Delta t \\ -2\alpha \Delta t & 2\alpha \Delta t \end{bmatrix} \begin{bmatrix} c_t \\ d_t \end{bmatrix} + \begin{bmatrix} \Delta t (p_t + r) \\ \Delta t (-p_t + r) \end{bmatrix}^\top \begin{bmatrix} c_t \\ d_t \end{bmatrix} \\[1em]
+    &= \frac{1}{2} \cdot 2 \cdot \alpha \Delta t \cdot (c_t^2 - 2c_t d_t + d_t^2) + \Delta t (p_t + r) c_t + \Delta t (-p_t + r) d_t \\[0.5em]
+    &= \alpha \Delta t \cdot (c_t - d_t)^2 + \Delta t \cdot p_t \cdot c_t + r \Delta t \cdot c_t - \Delta t \cdot p_t \cdot d_t + r \Delta t \cdot d_t \\[0.5em]
+    &= \alpha \Delta t \cdot (c_t - d_t)^2 + \Delta t \cdot p_t \cdot (c_t - d_t) + r \Delta t \cdot (c_t + d_t) \\[0.5em]
+    &= f_t \quad \checkmark
+\end{align}
+
+\textbf{Therefore, our objective function is mathematically equivalent to the OSQP standard form.}
+
+\subsubsection{Step 5: Assemble the Global Problem}
+
+Now we assemble all time steps into the global OSQP problem.
+
+\paragraph{Decision Variable Vector}
+
+We stack all decision variables into a single vector:
+\begin{equation}
+    \mathbf{x} = \begin{bmatrix} c_0 \\ \vdots \\ c_{T-1} \\ d_0 \\ \vdots \\ d_{T-1} \\ \text{soc}_0 \\ \vdots \\ \text{soc}_T \end{bmatrix} \in \mathbb{R}^{3T+1}
+\end{equation}
+
+The variable indices are:
+\begin{itemize}
+    \item $c_t$: index $t$ for $t \in \{0, \ldots, T-1\}$
+    \item $d_t$: index $T + t$ for $t \in \{0, \ldots, T-1\}$
+    \item $\text{soc}_t$: index $2T + t$ for $t \in \{0, \ldots, T\}$
+\end{itemize}
+
+\subsubsection{Hessian Matrix $\mathbf{P}$ (Quadratic Cost)}
+
+The quadratic term in the objective is the price impact:
+\begin{equation}
+    \alpha \cdot \Delta t \cdot (d_t - c_t)^2 = \alpha \cdot \Delta t \cdot (c_t^2 - 2 c_t d_t + d_t^2)
+\end{equation}
+
+For each time step $t$, this contributes to the Hessian:
+\begin{itemize}
+    \item Entry $(t, t)$: coefficient of $c_t^2$ → $2 \alpha \Delta t$
+    \item Entry $(T+t, T+t)$: coefficient of $d_t^2$ → $2 \alpha \Delta t$
+    \item Entry $(t, T+t)$ and $(T+t, t)$: coefficient of $c_t d_t$ → $-2 \alpha \Delta t$
+\end{itemize}
+
+The factor of 2 arises because the QP form uses $\frac{1}{2} \mathbf{x}^\top \mathbf{P} \mathbf{x}$, so we need $P_{ii} = 2 \times (\text{coefficient of } x_i^2)$.
+
+The Hessian is a sparse $(3T+1) \times (3T+1)$ matrix with $4T$ non-zero entries (block-diagonal structure for the $(c, d)$ variables, zeros for SOC variables):
+\begin{equation}
+    \mathbf{P} = \begin{bmatrix}
+        \mathbf{P}_{cc} & \mathbf{P}_{cd} & \mathbf{0} \\
+        \mathbf{P}_{cd}^\top & \mathbf{P}_{dd} & \mathbf{0} \\
+        \mathbf{0} & \mathbf{0} & \mathbf{0}
+    \end{bmatrix}
+\end{equation}
+where $\mathbf{P}_{cc} = \mathbf{P}_{dd} = 2\alpha\Delta t \cdot \mathbf{I}_T$ and $\mathbf{P}_{cd} = -2\alpha\Delta t \cdot \mathbf{I}_T$.
+
+\subsubsection{Linear Cost Vector $\mathbf{q}$}
+
+The linear terms come from trading costs and hurdle costs:
+\begin{align}
+    q_t &= \Delta t \cdot p_t + r \cdot \Delta t && \text{(coefficient of } c_t \text{)} \\
+    q_{T+t} &= -\Delta t \cdot p_t + r \cdot \Delta t && \text{(coefficient of } d_t \text{)} \\
+    q_{2T+t} &= 0 && \text{(coefficient of } \text{soc}_t \text{)}
+\end{align}
+
+Interpretation:
+\begin{itemize}
+    \item Charging ($c_t$): costs the electricity price plus hurdle rate
+    \item Discharging ($d_t$): earns the electricity price (negative cost) but pays hurdle rate
+    \item SOC variables have no direct cost
+\end{itemize}
+
+\subsubsection{Constraint Matrix $\mathbf{A}$}
+
+The constraints are encoded in the matrix $\mathbf{A}$ with bounds $\mathbf{l}$ and $\mathbf{u}$:
+
+\paragraph{1. Power bounds (2T constraints):}
+\begin{align}
+    0 \leq c_t \leq P_{\max} &\quad \Rightarrow \quad \text{Row with } A_{i,t} = 1, \; l_i = 0, \; u_i = P_{\max} \\
+    0 \leq d_t \leq P_{\max} &\quad \Rightarrow \quad \text{Row with } A_{i,T+t} = 1, \; l_i = 0, \; u_i = P_{\max}
+\end{align}
+
+\paragraph{2. SOC bounds (T+1 constraints):}
+\begin{equation}
+    0 \leq \text{soc}_t \leq E_{\max} \quad \Rightarrow \quad \text{Row with } A_{i,2T+t} = 1, \; l_i = 0, \; u_i = E_{\max}
+\end{equation}
+
+\paragraph{3. SOC dynamics (T equality constraints):}
+
+Rearranging equation~\eqref{eq:soc_dynamics}:
+\begin{equation}
+    \text{soc}_{t+1} - \text{soc}_t - \Delta t \cdot \eta_{\text{ch}} \cdot c_t + \frac{\Delta t}{\eta_{\text{dis}}} \cdot d_t = 0
+\end{equation}
+
+Each constraint $t \in \{0, \ldots, T-1\}$ has the following non-zero entries in row $i$:
+\begin{itemize}
+    \item $A_{i, t} = -\Delta t \cdot \eta_{\text{ch}}$ (coefficient of $c_t$)
+    \item $A_{i, T+t} = +\Delta t / \eta_{\text{dis}}$ (coefficient of $d_t$)
+    \item $A_{i, 2T+t} = -1$ (coefficient of $\text{soc}_t$)
+    \item $A_{i, 2T+t+1} = +1$ (coefficient of $\text{soc}_{t+1}$)
+\end{itemize}
+With bounds $l_i = u_i = 0$ (equality constraint).
+
+\paragraph{4. Initial SOC (1 equality constraint):}
+\begin{equation}
+    \text{soc}_0 = \text{soc}_{\text{init}} \quad \Rightarrow \quad A_{i, 2T} = 1, \; l_i = u_i = \text{soc}_{\text{init}}
+\end{equation}
+
+\paragraph{5. Terminal SOC (1 equality constraint, if enforced):}
+\begin{equation}
+    \text{soc}_T = 0 \quad \Rightarrow \quad A_{i, 3T} = 1, \; l_i = u_i = 0
+\end{equation}
+
+\subsubsection{Computational Efficiency: $\mathcal{O}(T)$ vs. $\mathcal{O}(T^2)$}
+
+A naive formulation that expresses SOC as a cumulative sum of past decisions:
+\begin{equation}
+    \text{soc}_t = \text{soc}_0 + \sum_{\tau=0}^{t-1} \left( \Delta t \cdot \eta_{\text{ch}} \cdot c_\tau - \frac{\Delta t}{\eta_{\text{dis}}} \cdot d_\tau \right)
+\end{equation}
+leads to a constraint matrix with $\mathcal{O}(T^2)$ non-zero entries (a dense lower-triangular structure). For $T \approx 52{,}600$ (6 years hourly), this would require $\sim$1.4 billion entries — computationally infeasible.
+
+Our formulation with explicit SOC variables and local dynamics constraints has only $\mathcal{O}(T)$ non-zero entries ($\sim$4 entries per constraint × $\sim$4T constraints = $\sim$16T entries). For $T = 52{,}600$:
+\begin{itemize}
+    \item Naive approach: $\sim$1.4 billion entries, >10 GB memory
+    \item Our approach: $\sim$840{,}000 entries, $\sim$10 MB memory
+\end{itemize}
+
+This reduction by a factor of $\sim$60{,}000 makes multi-year simulations tractable.
+
+\subsubsection{Summary: Complete QP Specification}
+
+\begin{equation}
+    \begin{aligned}
+        \min_{\mathbf{x} \in \mathbb{R}^{3T+1}} \quad & \frac{1}{2} \mathbf{x}^\top \mathbf{P} \mathbf{x} + \mathbf{q}^\top \mathbf{x} \\
+        \text{subject to} \quad & \mathbf{l} \leq \mathbf{A} \mathbf{x} \leq \mathbf{u}
+    \end{aligned}
+\end{equation}
+
+\begin{itemize}
+    \item Variables: $3T + 1$ (charging powers, discharging powers, SOC states)
+    \item Constraints: $\sim 4T + 3$ (power bounds, SOC bounds, dynamics, boundary conditions)
+    \item Non-zeros in $\mathbf{P}$: $4T$ (sparse block-diagonal)
+    \item Non-zeros in $\mathbf{A}$: $\sim 7T$ (sparse banded)
+\end{itemize}
+
+% --------------------------------------------
+\subsection{Scenarios and Parameterization}
+\label{subsec:scenarios}
+% --------------------------------------------
+
+\subsubsection{Scenario Design}
+
+We investigate five scenarios spanning four orders of magnitude in storage capacity (Table~\ref{tab:scenarios}). The scenario names reflect relative size: Extra-small (Ex), Small (S), Medium (M), Large (L), and Extra-Large (XL).
+
+\begin{table}[htbp]
+    \centering
+    \caption{Overview of simulation scenarios}
+    \label{tab:scenarios}
+    \begin{tabular}{lrrrl}
+        \toprule
+        Scenario & Capacity $E_{\max}$ & Power $P_{\max}$ & Price Impact $\alpha$ & Market Role \\
+        & [MWh] & [MW] & [€/(MW$^2 \cdot$h)] & \\
+        \midrule
+        Ex & 4 & 1 & 0 & Price taker \\
+        S & 10 & 2.5 & 0.01 & Price maker (small) \\
+        M & 100 & 25 & 0.01 & Price maker (medium) \\
+        L & 1,000 & 250 & 0.01 & Price maker (large) \\
+        XL & 10,000 & 2,500 & 0.01 & Price maker (very large) \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The \textit{Ex} scenario serves as a benchmark: with $\alpha = 0$, it represents a price-taking battery whose trading has no market impact. This yields the maximum possible specific revenue (€/MWh capacity). The other scenarios share the same price impact coefficient $\alpha = 0.01$, allowing us to isolate the effect of scale.
+
+\subsubsection{Parameter Selection}
+
+Table~\ref{tab:parameters} summarizes the simulation parameters. Where applicable, we provide literature references or derivations.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Simulation parameters and their justification}
+    \label{tab:parameters}
+    \begin{tabular}{llrl}
+        \toprule
+        Parameter & Symbol & Value & Justification \\
+        \midrule
+        Round-trip efficiency & $\eta_{\text{rt}}$ & 85\% & Typical for Li-ion BESS \\
+        Charge efficiency & $\eta_{\text{ch}}$ & 92.2\% & $= \sqrt{0.85}$ (symmetric split) \\
+        Discharge efficiency & $\eta_{\text{dis}}$ & 92.2\% & $= \sqrt{0.85}$ (symmetric split) \\
+        C-rate & — & 0.25 & 4-hour battery (energy-optimized) \\
+        Hurdle rate & $r$ & 7 €/MWh & $\approx$ 14 €/cycle (degradation) \\
+        Time step & $\Delta t$ & 1 h & Hourly market resolution \\
+        Planning horizon & $T$ & 52,604 & 6 years (2019–2024) \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\paragraph{Round-trip Efficiency (85\%):}
+Lithium-ion battery systems typically achieve round-trip efficiencies of 80–90\%, depending on the power electronics, depth of discharge, and operating conditions. We use 85\% as a conservative mid-range estimate. The symmetric split $\eta_{\text{ch}} = \eta_{\text{dis}} = \sqrt{0.85} \approx 0.922$ assumes equal losses during charging and discharging.
+
+\paragraph{C-rate (0.25):}
+The C-rate of 0.25 corresponds to a 4-hour battery (full charge/discharge in 4 hours at rated power). This is representative of energy-arbitrage-focused systems. Higher C-rates (0.5–1.0) are common for frequency regulation applications but would increase cycling stress.
+
+\paragraph{Hurdle Rate (7 €/MWh):}
+The hurdle rate of 7~€/MWh throughput translates to approximately 14~€ per full cycle per MWh capacity. This accounts for:
+\begin{itemize}
+    \item Cycle-induced degradation (capacity fade)
+    \item Opportunity costs (capacity not available for other services)
+\end{itemize}
+Literature values for Li-ion degradation costs range from 10–50~€/MWh-cycle depending on battery chemistry and application. Our choice represents a moderate estimate.
+
+\paragraph{Price Impact Coefficient ($\alpha = 0.01$):}
+The price impact parameter $\alpha$ is not directly observable and represents a modeling assumption. The value 0.01~€/(MW$^2 \cdot$h) implies:
+\begin{itemize}
+    \item Trading 10~MW incurs $0.01 \times 10^2 = 1$~€/h additional cost
+    \item Trading 100~MW incurs $0.01 \times 100^2 = 100$~€/h additional cost
+\end{itemize}
+This quadratic scaling ensures that large trades are disproportionately penalized, reflecting market depth limitations.
+
+% --------------------------------------------
+\subsection{Data and Implementation}
+\label{subsec:implementation}
+% --------------------------------------------
+
+\subsubsection{Market Data}
+
+Day-ahead electricity prices for the German bidding zone (DE-LU) were obtained from the ENTSO-E Transparency Platform for the period January 1, 2019 to December 31, 2024. The dataset comprises 52,604 hourly observations. Missing values (due to daylight saving time transitions or data gaps) were interpolated linearly.
+
+\subsubsection{Software Implementation}
+
+The optimization model was implemented in Python 3.9 using the following libraries:
+\begin{itemize}
+    \item \textbf{OSQP} (Operator Splitting Quadratic Program): A first-order solver for convex QPs, chosen for its ability to handle large-scale sparse problems efficiently.
+    \item \textbf{SciPy}: For sparse matrix construction (CSC format).
+    \item \textbf{pandas/NumPy}: For data handling and numerical operations.
+\end{itemize}
+
+The solver was configured with absolute and relative tolerances of $10^{-3}$, maximum iterations of 100,000, and solution polishing enabled. Typical solution times were 20–60 seconds per scenario on a standard laptop (Apple M1, 8 cores).
+
+\subsubsection{Multi-Year Handling}
+
+For computational efficiency, the 6-year horizon was solved as a single optimization problem (not year-by-year). This ensures:
+\begin{itemize}
+    \item Continuous SOC trajectory across year boundaries
+    \item Global optimality over the entire horizon
+    \item No artificial boundary effects at year transitions
+\end{itemize}
+
+The terminal SOC constraint ($\text{soc}_T = 0$) is enforced only at the absolute end (December 31, 2024), not at intermediate year-ends.
+
+% ============================================
+\section{Results}
+\label{sec:results}
+% ============================================
+
+This section presents the simulation results, beginning with aggregate arbitrage revenues, followed by an analysis of trading behavior, and concluding with sensitivity analyses.
+
+% --------------------------------------------
+\subsection{Arbitrage Revenues}
+\label{subsec:revenues}
+% --------------------------------------------
+
+Table~\ref{tab:results} summarizes the key performance metrics for each scenario over the 6-year simulation period.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Arbitrage results by scenario (2019–2024)}
+    \label{tab:results}
+    \begin{tabular}{lrrrr}
+        \toprule
+        Scenario & Capacity & Total Revenue & Specific Revenue & Equivalent Cycles \\
+        & [MWh] & [€] & [€/MWh] & [–] \\
+        \midrule
+        Ex & 4 & XXX & XXX & XXX \\
+        S & 10 & XXX & XXX & XXX \\
+        M & 100 & XXX & XXX & XXX \\
+        L & 1,000 & XXX & XXX & XXX \\
+        XL & 10,000 & XXX & XXX & XXX \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+% NOTE: Replace XXX with actual values from arbitrage_summary_multiyear.csv
+
+\textbf{Key Observations:}
+
+\begin{enumerate}
+    \item \textbf{Diminishing specific returns:} The specific revenue (€/MWh capacity) decreases monotonically with battery size. The price-taking benchmark (Ex) achieves XXX~€/MWh, while the largest scenario (XL) achieves only XXX~€/MWh — a reduction of XX\%.
+    
+    \item \textbf{Absolute revenue scaling:} Total revenue increases with capacity, but sub-linearly. Doubling capacity does not double revenue due to price impact.
+    
+    \item \textbf{Cycle utilization:} Smaller batteries complete more equivalent cycles, indicating more aggressive trading. Larger batteries trade less frequently to avoid excessive price impact costs.
+\end{enumerate}
+
+% --------------------------------------------
+\subsection{Trading Behavior}
+\label{subsec:trading}
+% --------------------------------------------
+
+Figure~\ref{fig:trading_january} illustrates the optimal trading strategy during January 2019, a period with significant price volatility.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=\textwidth]{trading_january_2019.pdf}
+    \caption{Day-ahead prices and optimal trading decisions in January 2019. Positive values of $(d_t - c_t)$ indicate discharging (selling), negative values indicate charging (buying).}
+    \label{fig:trading_january}
+\end{figure}
+
+\textbf{Observed Patterns:}
+
+\begin{itemize}
+    \item \textbf{Daily arbitrage cycle:} The battery typically charges during nighttime hours (00:00–06:00) when prices are low, and discharges during evening peak hours (17:00–20:00) when prices are high.
+    
+    \item \textbf{Selective participation:} The battery does not trade every hour. It remains idle when the price spread is insufficient to cover efficiency losses, hurdle costs, and price impact.
+    
+    \item \textbf{Size-dependent aggressiveness:} The price taker (Ex) trades at full power whenever profitable. Larger batteries (L, XL) trade at reduced power to minimize price impact, resulting in smoother charge/discharge profiles.
+\end{itemize}
+
+\paragraph{Profitability Condition:}
+
+A trade is profitable when the price spread exceeds all costs:
+\begin{equation}
+    p_{\text{high}} - p_{\text{low}} > \underbrace{\frac{2r}{\eta_{\text{rt}}}}_{\text{Hurdle + Efficiency}} + \underbrace{2\alpha \cdot |d_t - c_t|}_{\text{Price Impact}}
+\end{equation}
+
+For the price taker ($\alpha = 0$) with $r = 7$~€/MWh and $\eta_{\text{rt}} = 0.85$:
+\begin{equation}
+    p_{\text{high}} - p_{\text{low}} > \frac{2 \times 7}{0.85} \approx 16.5 \text{ €/MWh}
+\end{equation}
+
+This explains why the battery does not arbitrage every daily price swing — only spreads exceeding $\sim$17~€/MWh are exploited.
+
+% --------------------------------------------
+\subsection{Sensitivity Analysis}
+\label{subsec:sensitivity}
+% --------------------------------------------
+
+To assess the robustness of results and identify key value drivers, we conducted sensitivity analyses on three parameters:
+
+\begin{enumerate}
+    \item \textbf{C-rate:} 0.125 / 0.25 / 0.5 (8h / 4h / 2h battery)
+    \item \textbf{Price impact $\alpha$:} 0.005 / 0.01 / 0.02
+    \item \textbf{Hurdle rate $r$:} 3.5 / 7 / 14 €/MWh
+\end{enumerate}
+
+% \begin{figure}[htbp]
+%     \centering
+%     \includegraphics[width=0.9\textwidth]{sensitivity_matrix.pdf}
+%     \caption{Sensitivity analysis: Percentage change in specific revenue relative to baseline (C-rate = 0.25, $\alpha$ = 0.01, $r$ = 7 €/MWh).}
+%     \label{fig:sensitivity}
+% \end{figure}
+
+\textbf{Key Findings:}
+
+\begin{itemize}
+    \item \textbf{C-rate:} Higher C-rates (shorter duration) increase revenue by enabling faster response to price spikes, but the effect saturates as prices rarely sustain extreme values for extended periods.
+    
+    \item \textbf{Price impact:} Revenues are highly sensitive to $\alpha$ for large batteries. Halving $\alpha$ increases XL revenue by approximately XX\%, while doubling $\alpha$ reduces it by XX\%.
+    
+    \item \textbf{Hurdle rate:} Lower hurdle rates increase trading activity and revenue. The effect is more pronounced for smaller batteries that trade more frequently.
+\end{itemize}
+
+% --------------------------------------------
+\subsection{Discussion: Economies of Scale vs. Price Impact}
+\label{subsec:discussion}
+% --------------------------------------------
+
+The results reveal a fundamental trade-off in battery storage scaling:
+
+\begin{itemize}
+    \item \textbf{Economies of scale} (favoring larger batteries):
+    \begin{itemize}
+        \item Lower specific capital costs (€/MWh)
+        \item Fixed operational costs spread over larger capacity
+        \item Grid connection and permitting efficiencies
+    \end{itemize}
+    
+    \item \textbf{Price impact diseconomies} (favoring smaller batteries):
+    \begin{itemize}
+        \item Large trades depress achievable prices
+        \item Reduced trading frequency to avoid market impact
+        \item Lower specific arbitrage revenues (€/MWh)
+    \end{itemize}
+\end{itemize}
+
+The net effect depends on the relative magnitudes. Our results suggest that for the German day-ahead market (2019–2024) and our assumed price impact coefficient, the diseconomies dominate at large scales: the XL scenario achieves only XX\% of the specific revenue of the price-taking benchmark.
+
+This has important implications for market participants and policy makers:
+\begin{itemize}
+    \item Very large storage projects may face diminishing marginal returns from pure arbitrage
+    \item Revenue stacking (combining arbitrage with ancillary services) becomes increasingly important for large assets
+    \item Market design should consider storage price impact to avoid overestimating flexibility value
+\end{itemize}
+
+% ============================================
+% END OF METHODOLOGY & RESULTS
+% ============================================

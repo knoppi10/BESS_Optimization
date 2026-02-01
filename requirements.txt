@@ -6,3 +6,4 @@ matplotlib
 ecos
 osqp
 scs
+python-dotenv

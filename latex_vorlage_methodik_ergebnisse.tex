@@ -1,0 +1,199 @@
+% ============================================
+% METHODIK & ERGEBNISSE - LaTeX Vorlage
+% Für Overleaf - Einfach kopieren
+% ============================================
+
+% Benötigte Packages (in Präambel einfügen):
+% \usepackage{amsmath, amssymb}
+% \usepackage{booktabs}
+% \usepackage{graphicx}
+% \usepackage{siunitx}
+
+% ============================================
+\section{Methodik}
+% ============================================
+
+\subsection{Modellübersicht}
+
+Die Simulation basiert auf einem \textit{Perfect Foresight}-Ansatz, bei dem vollständige Kenntnis der zukünftigen Day-Ahead-Strompreise angenommen wird. Dies stellt eine obere Schranke für die erreichbaren Arbitrage-Erlöse dar. Der Betrachtungszeitraum umfasst sechs Jahre (2019--2024) mit stündlicher Auflösung, was circa 52.600 Datenpunkte ergibt. Die Preisdaten stammen von ENTSO-E.
+
+Das Arbitrage-Konzept besteht darin, elektrische Energie zu Zeiten niedriger Preise zu speichern (Laden) und zu Zeiten hoher Preise wieder einzuspeisen (Entladen). Der Speicher agiert dabei als reiner Preisarbitrageur ohne Bereitstellung von Systemdienstleistungen.
+
+\subsection{Mathematische Formulierung}
+
+Das Optimierungsproblem wird als konvexes quadratisches Programm (QP) formuliert. Für jeden Zeitschritt $t = 0, 1, \ldots, T-1$ werden folgende Entscheidungsvariablen definiert:
+
+\begin{itemize}
+    \item $c_t \geq 0$: Ladeleistung in MW
+    \item $d_t \geq 0$: Entladeleistung in MW
+    \item $\text{soc}_t \geq 0$: Ladestand (State of Charge) in MWh
+\end{itemize}
+
+\subsubsection{Zielfunktion}
+
+Die Zielfunktion minimiert die Gesamtkosten (bzw. maximiert den Erlös durch negative Kosten):
+
+\begin{equation}
+    \min \sum_{t=0}^{T-1} \left[ \Delta t \cdot p_t \cdot (c_t - d_t) + \alpha \cdot \Delta t \cdot (d_t - c_t)^2 + r \cdot \Delta t \cdot (c_t + d_t) \right]
+\end{equation}
+
+Die drei Terme repräsentieren:
+\begin{enumerate}
+    \item \textbf{Handelserlös/-kosten}: $\Delta t \cdot p_t \cdot (c_t - d_t)$ \\
+    Laden ($c_t > 0$) verursacht Kosten zum Preis $p_t$, Entladen ($d_t > 0$) generiert Erlös.
+    
+    \item \textbf{Price Impact}: $\alpha \cdot \Delta t \cdot (d_t - c_t)^2$ \\
+    Quadratische Kosten, die den Markteinfluss großer Handelsvolumina modellieren. Der Parameter $\alpha$ [€/(MW$^2 \cdot$h)] bestimmt die Stärke dieses Effekts.
+    
+    \item \textbf{Hurdle Costs}: $r \cdot \Delta t \cdot (c_t + d_t)$ \\
+    Durchsatzabhängige Kosten mit Rate $r$ [€/MWh], die Batteriedegradation und Opportunitätskosten abbilden.
+\end{enumerate}
+
+\subsubsection{Nebenbedingungen}
+
+\textbf{SOC-Dynamik} (Energieerhaltung):
+\begin{equation}
+    \text{soc}_{t+1} = \text{soc}_t + \Delta t \cdot \eta_{\text{ch}} \cdot c_t - \frac{\Delta t}{\eta_{\text{dis}}} \cdot d_t \quad \forall t \in \{0, \ldots, T-1\}
+\end{equation}
+
+\textbf{Leistungsgrenzen}:
+\begin{equation}
+    0 \leq c_t \leq P_{\max}, \quad 0 \leq d_t \leq P_{\max} \quad \forall t
+\end{equation}
+
+\textbf{Kapazitätsgrenzen}:
+\begin{equation}
+    0 \leq \text{soc}_t \leq E_{\max} \quad \forall t
+\end{equation}
+
+\textbf{Randbedingungen}:
+\begin{equation}
+    \text{soc}_0 = 0, \quad \text{soc}_T = 0
+\end{equation}
+
+wobei $P_{\max} = \text{C-Rate} \times E_{\max}$ die maximale Leistung und $E_{\max}$ die Speicherkapazität bezeichnet.
+
+\subsection{Szenarien}
+
+Es werden fünf Szenarien mit unterschiedlichen Speicherkapazitäten untersucht (Tabelle~\ref{tab:szenarien}). Das Szenario \textit{Ex} (exogen) repräsentiert einen \textit{Price Taker}, der keinen Einfluss auf den Marktpreis hat ($\alpha = 0$). Die übrigen Szenarien berücksichtigen den Price Impact.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Übersicht der Simulationsszenarien}
+    \label{tab:szenarien}
+    \begin{tabular}{lrrrl}
+        \toprule
+        Szenario & Kapazität & Leistung & $\alpha$ & Interpretation \\
+        & [MWh] & [MW] & [€/(MW$^2 \cdot$h)] & \\
+        \midrule
+        Ex & 4 & 1 & 0 & Price Taker \\
+        S & 10 & 2,5 & 0,01 & Kleiner Speicher \\
+        M & 100 & 25 & 0,01 & Mittlerer Speicher \\
+        L & 1.000 & 250 & 0,01 & Großer Speicher \\
+        XL & 10.000 & 2.500 & 0,01 & Sehr großer Speicher \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Parametrisierung}
+
+Tabelle~\ref{tab:parameter} fasst die verwendeten Parameter zusammen. Die Werte orientieren sich an aktueller Literatur zu Lithium-Ionen-Batteriespeichern.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Simulationsparameter}
+    \label{tab:parameter}
+    \begin{tabular}{llrl}
+        \toprule
+        Parameter & Symbol & Wert & Quelle/Begründung \\
+        \midrule
+        Rundreiseeffizienz & $\eta_{\text{rt}}$ & 85\% & Typisch für Li-Ion \\
+        Ladeeffizienz & $\eta_{\text{ch}}$ & 92,2\% & $\sqrt{\eta_{\text{rt}}}$ \\
+        Entladeeffizienz & $\eta_{\text{dis}}$ & 92,2\% & $\sqrt{\eta_{\text{rt}}}$ \\
+        C-Rate & -- & 0,25 & 4-Stunden-Speicher \\
+        Hurdle Rate & $r$ & 7 €/MWh & Degradationskosten \\
+        Zeitschritt & $\Delta t$ & 1 h & Stündliche Auflösung \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+% ============================================
+\section{Ergebnisse}
+% ============================================
+
+\subsection{Arbitrage-Erlöse}
+
+Tabelle~\ref{tab:ergebnisse} zeigt die aggregierten Ergebnisse über den gesamten Simulationszeitraum (2019--2024).
+
+\begin{table}[htbp]
+    \centering
+    \caption{Arbitrage-Ergebnisse nach Szenario (2019--2024)}
+    \label{tab:ergebnisse}
+    \begin{tabular}{lrrrr}
+        \toprule
+        Szenario & Kapazität & Gesamterlös & Erlös/MWh & Zyklen \\
+        & [MWh] & [€] & [€/MWh] & \\
+        \midrule
+        Ex & 4 & XXX & XXX & XXX \\
+        S & 10 & XXX & XXX & XXX \\
+        M & 100 & XXX & XXX & XXX \\
+        L & 1.000 & XXX & XXX & XXX \\
+        XL & 10.000 & XXX & XXX & XXX \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+% HINWEIS: Ersetze XXX durch deine tatsächlichen Werte aus arbitrage_summary_multiyear.csv
+
+Der spezifische Erlös (€/MWh Kapazität) sinkt mit zunehmender Speichergröße deutlich. Während der Price Taker (Ex) einen Erlös von XXX~€/MWh erzielt, erreicht das XL-Szenario lediglich XXX~€/MWh -- eine Reduktion um XX\%.
+
+\subsection{Handelsverhalten}
+
+Abbildung~\ref{fig:januar2019} zeigt exemplarisch das Handelsverhalten im Januar 2019. Die Batterie lädt typischerweise in den Nachtstunden bei niedrigen Preisen und entlädt während der Abendspitze.
+
+\begin{figure}[htbp]
+    \centering
+    % \includegraphics[width=\textwidth]{januar_2019_plot.png}
+    \caption{Day-Ahead-Preis und Ladestrategie im Januar 2019. Positive Werte $(d_t - c_t > 0)$ entsprechen Entladung, negative Werte Ladung.}
+    \label{fig:januar2019}
+\end{figure}
+
+Auffällig ist, dass größere Speicher (L, XL) weniger aggressiv handeln als kleine (Ex, S). Dies ist auf den quadratischen Price Impact zurückzuführen: Große Handelsvolumina würden den erzielbaren Preis verschlechtern, weshalb der Optimierer das Volumen reduziert.
+
+\subsection{Sensitivitätsanalyse}
+
+Um die Robustheit der Ergebnisse zu prüfen, wurde eine Sensitivitätsanalyse durchgeführt. Variiert wurden:
+\begin{itemize}
+    \item C-Rate: 0,125 / 0,25 / 0,5 (2h / 4h / 8h Speicher)
+    \item Price Impact $\alpha$: 0,005 / 0,01 / 0,02
+    \item Hurdle Rate $r$: 3,5 / 7 / 14 €/MWh
+\end{itemize}
+
+% Hier Sensitivitätsmatrix einfügen, z.B.:
+% \begin{figure}[htbp]
+%     \centering
+%     \includegraphics[width=0.8\textwidth]{sensitivity_matrix.png}
+%     \caption{Sensitivitätsanalyse: Prozentuale Änderung des Erlöses relativ zum Basisszenario.}
+%     \label{fig:sensitivity}
+% \end{figure}
+
+\subsection{Diskussion: Skaleneffekte}
+
+Die Ergebnisse zeigen einen Trade-off zwischen Economies of Scale und Price Impact:
+
+\begin{itemize}
+    \item \textbf{Ohne Price Impact} ($\alpha = 0$): Der spezifische Erlös wäre für alle Speichergrößen identisch. Größere Speicher würden linear mehr verdienen.
+    
+    \item \textbf{Mit Price Impact} ($\alpha > 0$): Der quadratische Term bestraft große Handelsvolumina überproportional. Die marginale Rendite sinkt mit der Speichergröße.
+\end{itemize}
+
+Mathematisch lässt sich die Bedingung für profitablen Handel formulieren als:
+\begin{equation}
+    p_{\text{hoch}} - p_{\text{niedrig}} > \frac{2r}{\eta_{\text{rt}}} + 2\alpha \cdot |d_t - c_t|
+\end{equation}
+
+Der Preisunterschied (Spread) muss also nicht nur die Effizienz- und Hurdle-Kosten decken, sondern auch den Price Impact. Für große Speicher mit hohem $|d_t - c_t|$ ist diese Bedingung schwerer zu erfüllen.
+
+% ============================================
+% ENDE METHODIK & ERGEBNISSE
+% ============================================

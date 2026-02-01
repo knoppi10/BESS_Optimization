@@ -72,7 +72,7 @@ class SimulationConfig:
     efficiency_discharge: Optional[float] = None
 
     c_rate: float = 0.25  # C-Rate (0.25 = 4-Stunden-Batterie)
-    hurdle_rate: float = 7.0  # €/MWh Durchsatz (Degradations-/Opportunitätskosten)
+    hurdle_rate: float = 5.0  # €/MWh Durchsatz (Degradations-/Opportunitätskosten)
     slope: float = 0.01  # Price Impact Parameter α [€/(MW²·h)] - DEFAULT für S, M, L, XL
     enforce_end_soc_zero: bool = True  # End-SOC = 0 am Ende des Horizonts
     debug: bool = False
@@ -96,15 +96,30 @@ class SimulationConfig:
 
 
 # Szenarien: {Name: (Kapazität_MWh, slope)}
-# "Ex" = Exogen/Price Taker → slope = 0 (kein Markteinfluss)
-# Alle anderen: slope aus SimulationConfig
+# Kapazitäten direkt als Keys für akademische Klarheit
+# Jede Kapazität wird mit UND ohne Price Impact (α) simuliert
+DEFAULT_SLOPE = SimulationConfig().slope
+
 SCENARIOS = {
-    'Ex': (4, 0.0),
-    'S':  (10, SimulationConfig().slope),
-    'M':  (100, SimulationConfig().slope),
-    'L':  (1000, SimulationConfig().slope),
-    'XL': (10000, SimulationConfig().slope)
+    # Price-Taker Baseline (4 MWh, α=0)
+    '4':        (4, 0.0),
+    
+    # Mit Price Impact (α > 0) - endogene Preisbeeinflussung
+    '10':       (10, DEFAULT_SLOPE),
+    '100':      (100, DEFAULT_SLOPE),
+    '1000':     (1000, DEFAULT_SLOPE),
+    '10000':    (10000, DEFAULT_SLOPE),
+    
+    # Price-Taker Versionen (α=0) - theoretischer Gewinn ohne Preisbeeinflussung
+    '10_pt':    (10, 0.0),
+    '100_pt':   (100, 0.0),
+    '1000_pt':  (1000, 0.0),
+    '10000_pt': (10000, 0.0),
 }
+
+# Kapazitäten für Vergleichsplots (nur Hauptszenarien, ohne _pt Suffix)
+MAIN_CAPACITIES = ['10', '100', '1000', '10000']
+PRICE_TAKER_CAPACITY = 4  # MWh - korrespondiert mit Szenario '4'
 
 # ==========================================
 # 2. DATEN LADEN
@@ -602,7 +617,7 @@ def run_simulation():
     })
     output_df.set_index('timestamp', inplace=True)
     
-    csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'simulation_decisions_multiyear.csv')
+    csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'simulation_decisions_with_pt.csv')
     output_df.to_csv(csv_path)
     print(f"✓")
     print(f"Datei: {csv_path}")
@@ -610,7 +625,7 @@ def run_simulation():
     # 7. Arbitrage-Tabelle speichern
     print("Speichere Arbitrage-Zusammenfassung...", end=' ', flush=True)
     revenue_df = pd.DataFrame(revenue_summary)
-    table_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'arbitrage_summary_multiyear.csv')
+    table_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'arbitrage_summary_with_pt.csv')
     revenue_df.to_csv(table_path, index=False)
     print(f"✓")
     print(f"Datei: {table_path}")

@@ -9,13 +9,17 @@
 import pandas as pd
 import os
 from entsoe import EntsoePandasClient
+from dotenv import load_dotenv
 
 # ------------------------------------------------------------------------------
 # KONFIGURATION
 # ------------------------------------------------------------------------------
-# 1. Registriere dich auf https://transparency.entsoe.eu/
-# 2. Beantrage den API Key per Mail (siehe Doku)
-API_KEY = 'fdecbe8e-0a99-46ac-9ed3-21bfd950ae8d' 
+# Lade Umgebungsvariablen aus der .env-Datei.
+# Diese Datei wird NICHT im Git-Repository gespeichert und enthält den API-Schlüssel.
+load_dotenv()
+
+# Hole den API-Schlüssel aus der Umgebungsvariable.
+API_KEY = os.getenv('ENTSOE_API_KEY')
 
 COUNTRY_CODE = 'DE_LU'  # Bidding Zone Deutschland/Luxemburg
 START_DATE = '2019-01-01'
@@ -23,8 +27,12 @@ END_DATE = '2025-12-31'
 TIMEZONE = 'Europe/Berlin'
 
 def fetch_and_process_data():
-    if API_KEY == '0':
-        raise ValueError("Bitte trage deinen echten ENTSO-E API Key im Skript ein.")
+    if not API_KEY or API_KEY == 'YOUR_API_KEY_HERE':
+        raise ValueError(
+            "ENTSO-E API Key nicht gefunden oder nicht gesetzt. "
+            "Bitte erstellen Sie eine `.env` Datei (basierend auf der `.env.example` Vorlage) "
+            "und tragen Sie dort Ihren persönlichen API-Schlüssel ein."
+        )
 
     print(f"Verbinde zu ENTSO-E Client...")
     client = EntsoePandasClient(api_key=API_KEY)
