@@ -1,88 +1,188 @@
-# BESS Arbitrage Optimierung
+# Battery Energy Storage System (BESS) Arbitrage Optimization
 
-Dieses Projekt analysiert die techno-ökonomische Arbitrage-Strategie von Batteriespeichersystemen (BESS) am deutschen Day-Ahead-Strommarkt. Es verwendet ein quadratisches Optimierungsmodell, um die Lade- und Entladeentscheidungen eines BESS zu simulieren und die erzielbaren Erlöse unter Berücksichtigung von physikalischen und ökonomischen Parametern zu bewerten.
+[![Python 3.8+](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## Kernkomponenten
+A techno-economic analysis framework for optimizing Battery Energy Storage System (BESS) arbitrage strategies in the German Day-Ahead electricity market. This project implements a quadratic optimization model to simulate charging/discharging decisions and evaluate achievable revenues under various physical and economic constraints.
 
-Das Projekt besteht aus drei Hauptskripten:
+## 📋 Table of Contents
 
-1.  **`data_fetch.py`**: Dieses Skript lädt historische Marktdaten (Day-Ahead-Preise, Last, Erzeugung aus Erneuerbaren) von der ENTSO-E Transparenzplattform für den Zeitraum 2019-2025. Die aufbereiteten Daten werden in `market_data_2019_2025.csv` gespeichert.
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Project Structure](#project-structure)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Methodology](#methodology)
+- [Results](#results)
+- [License](#license)
 
-2.  **`Update.py`**: Das Kernstück des Projekts. Es führt die BESS-Simulation auf Basis der geladenen Marktdaten durch. Mittels eines quadratischen Optimierungsmodells (OSQP) werden die Lade-/Entladezyklen optimiert, um den Arbitrage-Erlös zu maximieren. Das Modell berücksichtigt dabei:
-    *   Wirkungsgrade (Laden/Entladen)
-    *   C-Rate (Leistung im Verhältnis zur Kapazität)
-    *   Degradationskosten (als Hurdle-Rate)
-    *   Preiseffekt (Einfluss großer Speichersysteme auf den Marktpreis)
-    
-    Die Ergebnisse werden in `simulation_decisions_with_pt.csv` (stündliche Entscheidungen) und `arbitrage_summary_with_pt.csv` (zusammengefasste Erlöse) gespeichert.
+## Overview
 
-3.  **`presentation_analysis.py`**: Dieses Skript dient der Analyse und Visualisierung der Simulationsergebnisse. Es generiert eine Reihe von Plots zur Auswertung der Performance, Sensitivität und Wirtschaftlichkeit der BESS-Strategien und speichert diese als `.png`-Dateien im Hauptverzeichnis.
+This project analyzes the profitability of large-scale battery storage systems participating in energy arbitrage on the German Day-Ahead market. The model considers:
 
-## Setup
+- **Price Impact**: Large batteries influence market prices when trading (endogenous price effect)
+- **Technical Constraints**: Round-trip efficiency, C-rate limitations, state-of-charge bounds
+- **Economic Factors**: Degradation costs modeled as hurdle rates
 
-### 1. Voraussetzungen
-*   Python 3.8 oder höher
-*   Ein persönlicher API-Schlüssel von der [ENTSO-E Transparenzplattform](https://transparency.entsoe.eu/).
+The analysis covers **2019-2024** market data and compares multiple battery capacities (4 MWh to 10,000 MWh).
 
-### 2. Installation
-1.  **Repository klonen:**
-    ```bash
-    git clone <repository-url>
-    cd BESS_Optimization
-    ```
+## Key Features
 
-2.  **Virtuelle Umgebung erstellen und aktivieren:**
-    *   Auf macOS/Linux:
-        ```bash
-        python3 -m venv .venv
-        source .venv/bin/activate
-        ```
-    *   Auf Windows:
-        ```bash
-        python -m venv .venv
-        .venv\Scripts\activate
-        ```
+- **Quadratic Optimization**: Uses CVXPY with OSQP solver for efficient convex optimization
+- **Price Impact Modeling**: Implements linear price impact function (α parameter)
+- **Multi-Year Simulation**: Continuous simulation across 6 years with SOC carryover
+- **Parallel Processing**: Leverages multiprocessing for faster computation
+- **Comprehensive Visualization**: Publication-ready plots for academic use
+- **Sensitivity Analysis**: Parameter studies for hurdle rate, slope (α), and C-rate
 
-3.  **Abhängigkeiten installieren:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+## Project Structure
 
-### 3. API-Schlüssel konfigurieren
-Um Marktdaten abrufen zu können, benötigen Sie einen API-Schlüssel von ENTSO-E.
+```
+BESS_Optimization/
+│
+├── 01_data_fetch.py                    # Downloads market data from ENTSO-E API
+├── 02_Arbitrage_Optimizer.py           # Core simulation engine (quadratic optimization)
+├── 03_analysis_plots.py                # Visualization and analysis scripts
+│
+├── 04_market_data_2019_2025.csv        # Historical market data
+├── 05_simulation_decisions_with_pt.csv # Hourly dispatch decisions
+├── 06_arbitrage_summary_with_pt.csv    # Simulation results summary
+│
+├── plot_*.png                          # Generated figures
+├── requirements.txt                    # Python dependencies
+├── .env.example                        # API key template
+└── LICENSE                             # MIT License
+```
 
-1.  Erstellen Sie eine Kopie der Vorlagedatei `.env.example` und nennen Sie sie `.env`:
-    ```bash
-    cp .env.example .env
-    ```
-2.  Öffnen Sie die neu erstellte `.env`-Datei mit einem Texteditor.
-3.  Ersetzen Sie `YOUR_API_KEY_HERE` mit Ihrem persönlichen ENTSO-E API-Schlüssel. Die Datei sollte danach so aussehen:
-    ```
-    ENTSOE_API_KEY="dein-persönlicher-api-schlüssel"
-    ```
-Die `.env`-Datei wird durch `.gitignore` ignoriert und somit niemals im Git-Repository gespeichert.
+## Installation
 
-## Workflow & Nutzung
+### Prerequisites
 
-Die Skripte sollten in der folgenden Reihenfolge ausgeführt werden:
+- Python 3.8 or higher
+- ENTSO-E Transparency Platform API key ([Register here](https://transparency.entsoe.eu/))
 
-1.  **Marktdaten herunterladen:**
-    Führen Sie dieses Skript einmalig aus, um die benötigten Daten von ENTSO-E zu laden.
-    ```bash
-    python data_fetch.py
-    ```
-    *Output*: `market_data_2019_2025.csv`
+### Setup
 
-2.  **Simulation durchführen:**
-    Starten Sie die Arbitrage-Simulation für die verschiedenen Szenarien. Dieses Skript nutzt alle verfügbaren CPU-Kerne für eine parallele Berechnung.
-    ```bash
-    python Update.py
-    ```
-    *Outputs*: `arbitrage_summary_with_pt.csv`, `simulation_decisions_with_pt.csv`
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/knoppi10/BESS_Optimization.git
+   cd BESS_Optimization
+   ```
 
-3.  **Analyse und Plots generieren:**
-    Nach Abschluss der Simulation können Sie dieses Skript ausführen, um alle Grafiken für die Ergebnispräsentation zu erstellen.
-    ```bash
-    python presentation_analysis.py
-    ```
-    *Outputs*: Diverse `plot_*.png` Dateien.
+2. **Create and activate virtual environment**
+   ```bash
+   # macOS/Linux
+   python3 -m venv .venv
+   source .venv/bin/activate
+   
+   # Windows
+   python -m venv .venv
+   .venv\Scripts\activate
+   ```
+
+3. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Configure API key**
+   ```bash
+   cp .env.example .env
+   # Edit .env and add your ENTSO-E API key
+   ```
+
+## Usage
+
+Execute the scripts in the following order:
+
+### 1. Download Market Data
+```bash
+python 01_data_fetch.py
+```
+Downloads Day-Ahead prices from ENTSO-E for 2019-2024. Output: `04_market_data_2019_2025.csv`
+
+### 2. Run Optimization
+```bash
+python 02_Arbitrage_Optimizer.py
+```
+Executes the BESS arbitrage simulation for all scenarios. Uses parallel processing. Output: `06_arbitrage_summary_with_pt.csv`, `05_simulation_decisions_with_pt.csv`
+
+### 3. Generate Visualizations
+```bash
+python 03_analysis_plots.py
+```
+Creates all analysis plots. Output: `plot_*.png` files
+
+## Methodology
+
+### Optimization Model
+
+The model maximizes arbitrage revenue subject to battery constraints:
+
+$$\max \sum_{t=1}^{T} \left[ p_t \cdot (d_t - c_t) - \alpha \cdot (d_t - c_t)^2 \right] - h \cdot \text{cycles}$$
+
+Where:
+- $p_t$: Day-Ahead price at time $t$ (€/MWh)
+- $d_t, c_t$: Discharge and charge power (MW)
+- $\alpha$: Price impact coefficient (€/MW²h)
+- $h$: Hurdle rate / degradation cost (€/cycle)
+
+### Scenarios
+
+| Scenario | Capacity (MWh) | Price Impact (α) |
+|----------|----------------|------------------|
+| 4        | 4              | 0.05             |
+| 10       | 10             | 0.05             |
+| 100      | 100            | 0.05             |
+| 1000     | 1,000          | 0.05             |
+| 10000    | 10,000         | 0.05             |
+| *_pt     | (same)         | 0 (price-taker)  |
+
+### Key Parameters
+
+| Parameter | Default Value | Description |
+|-----------|---------------|-------------|
+| Round-trip Efficiency | 90% | η_charge × η_discharge |
+| C-Rate | 0.25 | Power/Capacity ratio |
+| Hurdle Rate | 7 €/MWh | Minimum spread for trading |
+| Slope (α) | 0.05 €/MW²h | Price impact coefficient |
+
+## Results
+
+### Key Findings
+
+- **Price Impact Effect**: Larger batteries (>100 MWh) experience significant revenue reduction due to market price impact
+- **Optimal Sizing**: Medium-sized systems (10-100 MWh) achieve best specific revenue (€/MWh capacity)
+- **Year Variability**: 2022 showed exceptional arbitrage opportunities due to energy crisis volatility
+
+### Generated Plots
+
+| Plot | Description |
+|------|-------------|
+| `plot_1_arbitrage_per_mwh.png` | Specific revenue by battery size |
+| `plot_2_cycles.png` | Full equivalent cycles by capacity |
+| `plot_3_change_rates.png` | Revenue/cycle change rates |
+| `plot_5_yearly_comparison.png` | Year-by-year performance |
+| `plot_5b_price_impact_cost.png` | Price-taker vs. price-maker comparison |
+| `plot_6_sensitivity.png` | Sensitivity analysis |
+| `plot_spread_boxplot.png` | Daily price spread evolution |
+
+## Data Sources
+
+- **Day-Ahead Prices**: [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/)
+- **Market Area**: Germany (DE-LU bidding zone)
+- **Time Period**: January 2019 – December 2024
+- **Resolution**: Hourly
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- ENTSO-E for providing transparent market data access
+- CVXPY and OSQP developers for the optimization framework
+
+---
+
+*Developed for academic research in energy economics.*
