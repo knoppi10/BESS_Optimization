@@ -131,21 +131,21 @@ Where:
 
 | Scenario | Capacity (MWh) | Price Impact (α) |
 |----------|----------------|------------------|
-| 4        | 4              | 0.05             |
-| 10       | 10             | 0.05             |
-| 100      | 100            | 0.05             |
-| 1000     | 1,000          | 0.05             |
-| 10000    | 10,000         | 0.05             |
+| 4        | 4              | 0 (price-taker)  |
+| 10       | 10             | 0.01             |
+| 100      | 100            | 0.01             |
+| 1000     | 1,000          | 0.01             |
+| 10000    | 10,000         | 0.01             |
 | *_pt     | (same)         | 0 (price-taker)  |
 
 ### Key Parameters
 
 | Parameter | Default Value | Description |
 |-----------|---------------|-------------|
-| Round-trip Efficiency | 90% | η_charge × η_discharge |
+| Round-trip Efficiency | 85% | η_charge × η_discharge |
 | C-Rate | 0.25 | Power/Capacity ratio |
-| Hurdle Rate | 7 €/MWh | Minimum spread for trading |
-| Slope (α) | 0.05 €/MW²h | Price impact coefficient |
+| Hurdle Rate | 5 €/MWh | Minimum spread for trading |
+| Slope (α) | 0.01 €/MW²h | Price impact coefficient |
 
 ## Results
 

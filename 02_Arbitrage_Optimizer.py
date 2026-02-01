@@ -14,7 +14,7 @@ import multiprocessing as mp
 warnings.filterwarnings('ignore')
 
 # 0. CONSTANTS
-MARKET_DATA_FILE = 'market_data_2019_2025.csv'
+MARKET_DATA_FILE = '04_market_data_2019_2025.csv'
 YEARS = [2019, 2020, 2021, 2022, 2023, 2024]
 
 
@@ -429,11 +429,11 @@ def run_simulation():
         **{scenario: aggregated_results[scenario] for scenario in SCENARIOS.keys()}
     })
     output_df.set_index('timestamp', inplace=True)
-    csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'simulation_decisions_with_pt.csv')
+    csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '05_simulation_decisions_with_pt.csv')
     output_df.to_csv(csv_path)
     
     revenue_df = pd.DataFrame(revenue_summary)
-    table_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'arbitrage_summary_with_pt.csv')
+    table_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '06_arbitrage_summary_with_pt.csv')
     revenue_df.to_csv(table_path, index=False)
     print("✓")
     

@@ -46,7 +46,7 @@ def fetch_and_process_data():
     df['residual_load'] = df['load'] - df['generation_renewable']
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    filename = os.path.join(script_dir, 'market_data_2019_2025.csv')
+    filename = os.path.join(script_dir, '04_market_data_2019_2025.csv')
     df.index.name = 'timestamp'
     df.to_csv(filename)
     print(f"Done! Saved to: {filename}")

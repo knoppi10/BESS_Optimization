@@ -81,7 +81,7 @@ def load_base_results():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
     # Prefer new file with price-taker scenarios, fall back to old file
-    summary_path_new = os.path.join(script_dir, 'arbitrage_summary_with_pt.csv')
+    summary_path_new = os.path.join(script_dir, '06_arbitrage_summary_with_pt.csv')
     summary_path_old = os.path.join(script_dir, 'arbitrage_summary_multiyear.csv')
     
     if os.path.exists(summary_path_new):
@@ -505,10 +505,10 @@ def run_sensitivity_analysis():
         results['c_rate']['revenue'].append(revenue / test_capacity)
         results['c_rate']['cycles'].append(cycles)
     
-    return results, test_year
+    return results, test_year, cfg_base
 
 
-def plot_sensitivity(results, test_year):
+def plot_sensitivity(results, test_year, cfg_base):
     params = ['hurdle_rate', 'slope', 'c_rate']
     titles = ['$h$ (€/MWh)', '$\\alpha$ (€/MW²h)', 'C-Rate']
     colors = ['#1f4e79', '#5b9bd5', '#9dc3e6']
@@ -522,11 +522,11 @@ def plot_sensitivity(results, test_year):
         if i == 0:
             axes[0, i].set_ylabel('Revenue (€/MWh)', fontsize=7)
         if param == 'hurdle_rate':
-            base_idx = results[param]['values'].index(7)
+            base_idx = results[param]['values'].index(cfg_base.hurdle_rate)
         elif param == 'slope':
-            base_idx = results[param]['values'].index(0.05)
+            base_idx = results[param]['values'].index(cfg_base.slope)
         else:
-            base_idx = results[param]['values'].index(0.25)
+            base_idx = results[param]['values'].index(cfg_base.c_rate)
         axes[0, i].axvline(x=results[param]['values'][base_idx], color='#999999', 
                           linestyle='--', linewidth=0.4)
         axes[1, i].plot(results[param]['values'], results[param]['cycles'],
@@ -548,11 +548,11 @@ def plot_sensitivity(results, test_year):
         axes2[0, i].set_xlabel(title, fontsize=7)
         axes2[0, i].set_ylabel('Revenue (€/MWh)', fontsize=7)
         if param == 'hurdle_rate':
-            base_idx = results[param]['values'].index(7)
+            base_idx = results[param]['values'].index(cfg_base.hurdle_rate)
         elif param == 'slope':
-            base_idx = results[param]['values'].index(0.05)
+            base_idx = results[param]['values'].index(cfg_base.slope)
         else:
-            base_idx = results[param]['values'].index(0.25)
+            base_idx = results[param]['values'].index(cfg_base.c_rate)
         axes2[0, i].axvline(x=results[param]['values'][base_idx], color='#999999', 
                           linestyle='--', linewidth=0.4)
         axes2[1, i].plot(results[param]['values'], results[param]['cycles'],
@@ -581,10 +581,10 @@ def run_full_sensitivity_matrix():
     # Use all years
     year_data = {year: df[df.index.year == year] for year in YEARS if len(df[df.index.year == year]) > 0}
     
-    # Base case parameters
-    base_slope = 0.05
-    base_crate = 0.25
-    base_hurdle = 7.0
+    # Base case parameters from config
+    base_slope = cfg_base.slope
+    base_crate = cfg_base.c_rate
+    base_hurdle = cfg_base.hurdle_rate
     
     # Parameter variations
     variations = {
@@ -733,12 +733,12 @@ def plot_sensitivity_matrix_table(pct_changes):
     return fig
 
 
-def plot_sensitivity_matrix(results, test_year):
+def plot_sensitivity_matrix(results, test_year, cfg_base):
     
     base_cases = {
-        'hurdle_rate': 5,
-        'slope': 0.01,
-        'c_rate': 0.25
+        'hurdle_rate': cfg_base.hurdle_rate,
+        'slope': cfg_base.slope,
+        'c_rate': cfg_base.c_rate
     }
     
     base_revenues = {}
@@ -1086,9 +1086,9 @@ if __name__ == "__main__":
         plot_price_impact_cost(results_df)
         
         print("\n6-7. Sensitivity Analysis...")
-        sensitivity_results, test_year = run_sensitivity_analysis()
-        plot_sensitivity(sensitivity_results, test_year)
-        plot_sensitivity_matrix(sensitivity_results, test_year)
+        sensitivity_results, test_year, cfg_base = run_sensitivity_analysis()
+        plot_sensitivity(sensitivity_results, test_year, cfg_base)
+        plot_sensitivity_matrix(sensitivity_results, test_year, cfg_base)
         
         print("\n8. Full Sensitivity Matrix (all scenarios)...")
         pct_changes, full_results, baselines = run_full_sensitivity_matrix()
