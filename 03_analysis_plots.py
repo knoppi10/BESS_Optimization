@@ -179,6 +179,11 @@ def plot_change_rates(results_df):
         labels.append(f'{int(capacities[i-1])}→{int(capacities[i])}')
     x = np.arange(len(labels))
     
+    # Calculate shared y-axis limits for both plots
+    all_values = change_revenue + change_cycles
+    y_min = min(all_values) * 1.1  # Extra space at bottom for labels
+    y_max = max(all_values) * 1.15 if max(all_values) > 0 else 5
+    
     fig, axes = plt.subplots(1, 2, figsize=(5, 2.5))
     
     # Revenue change
@@ -188,8 +193,9 @@ def plot_change_rates(results_df):
     axes[0].set_ylabel('Δ Revenue (%)')
     axes[0].set_xticks(x)
     axes[0].set_xticklabels(labels, rotation=45, ha='right', fontsize=6)
+    axes[0].set_ylim(y_min, y_max)  # Shared y-axis
     for bar, val in zip(bars1, change_revenue):
-        ypos = bar.get_height() + 0.3 if val >= 0 else bar.get_height() - 0.8
+        ypos = bar.get_height() + 0.5 if val >= 0 else bar.get_height() - 1.5
         axes[0].text(bar.get_x() + bar.get_width()/2, ypos,
                     f'{val:.1f}%', ha='center', va='bottom' if val >= 0 else 'top', fontsize=5)
     
@@ -200,8 +206,9 @@ def plot_change_rates(results_df):
     axes[1].set_ylabel('Δ Cycles (%)')
     axes[1].set_xticks(x)
     axes[1].set_xticklabels(labels, rotation=45, ha='right', fontsize=6)
+    axes[1].set_ylim(y_min, y_max)  # Shared y-axis
     for bar, val in zip(bars2, change_cycles):
-        ypos = bar.get_height() + 0.3 if val >= 0 else bar.get_height() - 0.8
+        ypos = bar.get_height() + 0.5 if val >= 0 else bar.get_height() - 1.5
         axes[1].text(bar.get_x() + bar.get_width()/2, ypos,
                     f'{val:.1f}%', ha='center', va='bottom' if val >= 0 else 'top', fontsize=5)
     
@@ -468,7 +475,7 @@ def run_sensitivity_analysis():
     base_slope = cfg_base.slope
     
     # Parameter variations
-    hurdle_variations = [0, 5, 7, 10, 15, 20, 30]  # €/MWh
+    hurdle_variations = [0, 5, 10, 15, 20, 29.1, 40]  # €/MWh (includes base value 29.1)
     slope_variations = [0, 0.01, 0.025, 0.05, 0.075, 0.1, 0.15]  # €/(MW²·h)
     crate_variations = [0.125, 0.25, 0.5, 1.0, 2.0]  # C-Rate
     
@@ -778,44 +785,94 @@ def plot_sensitivity_matrix(results, test_year, cfg_base):
         
         sensitivity_data.append(row)
     
-    # Original version
-    fig, ax = plt.subplots(figsize=(4, 2.5))
+    # Revenue perspective: positive % = more revenue (good), negative % = less revenue (bad)
+    # Original calculation is CORRECT:
+    # - Lower h → more revenue → positive % → GREEN (good) ✓
+    # - Higher h → less revenue → negative % → RED (bad) ✓
+    # - Lower α → less price impact → more revenue → positive % → GREEN ✓
+    # - Higher α → more price impact → less revenue → negative % → RED ✓
+    # - Lower C-rate → fewer cycles → less revenue → negative % → RED ✓
+    # - Higher C-rate → more cycles → more revenue → positive % → GREEN ✓
+    # NO SIGN FLIPPING NEEDED!
     data = np.array(sensitivity_data)
-    im = ax.imshow(data, cmap='RdBu_r', aspect='auto', vmin=-30, vmax=30)
+    
+    # Academic style: RdYlGn colormap (green=positive/good, red=negative/bad)
+    # Use proper figure size for academic papers
+    fig, ax = plt.subplots(figsize=(4.5, 2.8))
+    
+    # Create heatmap with green-red diverging colormap
+    im = ax.imshow(data, cmap='RdYlGn', aspect='auto', vmin=-40, vmax=40)
+    
+    # Set ticks and labels
     ax.set_xticks(np.arange(len(change_labels)))
     ax.set_yticks(np.arange(len(param_labels)))
-    ax.set_xticklabels(change_labels, fontsize=6)
-    ax.set_yticklabels(param_labels, fontsize=6)
+    ax.set_xticklabels(change_labels, fontsize=7)
+    ax.set_yticklabels(param_labels, fontsize=8)
+    
+    # Add axis labels
+    ax.set_xlabel('Parameter Variation from Baseline', fontsize=8)
+    
+    # Add cell borders for academic style
+    for i in range(len(param_labels)):
+        for j in range(len(change_labels)):
+            rect = plt.Rectangle((j-0.5, i-0.5), 1, 1, fill=False, 
+                                  edgecolor='white', linewidth=1.5)
+            ax.add_patch(rect)
+    
+    # Add text annotations
     for i in range(len(param_labels)):
         for j in range(len(change_labels)):
             val = data[i, j]
-            color = 'white' if abs(val) > 15 else 'black'
+            # Use black text for better readability, white only for extreme values
+            color = 'white' if abs(val) > 25 else 'black'
             ax.text(j, i, f'{val:+.0f}%', ha='center', va='center', 
-                   color=color, fontsize=6)
-    cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+                   color=color, fontsize=7, fontweight='medium')
+    
+    # Add colorbar with proper label
+    cbar = plt.colorbar(im, ax=ax, shrink=0.85, pad=0.02)
     cbar.ax.tick_params(labelsize=6)
+    cbar.set_label('Δ Arbitrage Revenue (%)', fontsize=7)
+    
+    # Add thin border around entire plot
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(0.5)
+        spine.set_color('#333333')
+    
     plt.tight_layout()
     plt.savefig('plot_7_sensitivity_matrix.png', dpi=300, bbox_inches='tight')
     plt.close()
     
-    # V2: With axis labels and colorbar label
-    fig2, ax2 = plt.subplots(figsize=(4, 2.5))
-    im2 = ax2.imshow(data, cmap='RdBu_r', aspect='auto', vmin=-30, vmax=30)
+    # V2: Alternative academic version with cleaner look
+    fig2, ax2 = plt.subplots(figsize=(4.5, 2.8))
+    im2 = ax2.imshow(data, cmap='RdYlGn', aspect='auto', vmin=-40, vmax=40)
     ax2.set_xticks(np.arange(len(change_labels)))
     ax2.set_yticks(np.arange(len(param_labels)))
-    ax2.set_xticklabels(change_labels, fontsize=6)
-    ax2.set_yticklabels(param_labels, fontsize=6)
-    ax2.set_xlabel('Parameter Variation', fontsize=7)
-    ax2.set_ylabel('Parameter', fontsize=7)
+    ax2.set_xticklabels(change_labels, fontsize=7)
+    ax2.set_yticklabels(param_labels, fontsize=8)
+    ax2.set_xlabel('Parameter Variation from Baseline', fontsize=8)
+    ax2.set_ylabel('Parameter', fontsize=8)
+    
+    # Cell borders
     for i in range(len(param_labels)):
         for j in range(len(change_labels)):
+            rect = plt.Rectangle((j-0.5, i-0.5), 1, 1, fill=False, 
+                                  edgecolor='white', linewidth=1.5)
+            ax2.add_patch(rect)
             val = data[i, j]
-            color = 'white' if abs(val) > 15 else 'black'
+            color = 'white' if abs(val) > 25 else 'black'
             ax2.text(j, i, f'{val:+.0f}%', ha='center', va='center', 
-                   color=color, fontsize=6)
-    cbar2 = plt.colorbar(im2, ax=ax2, shrink=0.8)
+                   color=color, fontsize=7, fontweight='medium')
+    
+    cbar2 = plt.colorbar(im2, ax=ax2, shrink=0.85, pad=0.02)
     cbar2.ax.tick_params(labelsize=6)
-    cbar2.set_label('Δ Revenue (%)', fontsize=6)
+    cbar2.set_label('Δ Arbitrage Revenue (%)', fontsize=7)
+    
+    for spine in ax2.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(0.5)
+        spine.set_color('#333333')
+    
     plt.tight_layout()
     plt.savefig('plot_7_sensitivity_matrix_v2.png', dpi=300, bbox_inches='tight')
     plt.close()
@@ -1038,9 +1095,14 @@ def plot_revenue_change_comparison_2019_2024():
         ax.set_title(f'Revenue Change Rate ({year})')
 
         for bar, val in zip(bars, change_revenue):
-            ypos = bar.get_height() + 0.3 if val >= 0 else bar.get_height() - 0.8
+            # Place text just below the bar
+            ypos = bar.get_height() + 0.5 if val >= 0 else bar.get_height() - 1
             ax.text(bar.get_x() + bar.get_width()/2, ypos,
-                        f'{val:.1f}%', ha='center', va='bottom' if val >= 0 else 'top', fontsize=5)
+                        f'{val:.1f}%', ha='center', va='bottom' if val >= 0 else 'top', fontsize=6)
+        
+        # Extend y-axis enough to fit labels below bars
+        ymin = min(change_revenue) - 15 if min(change_revenue) < 0 else -5
+        ax.set_ylim(ymin, 5)
 
     plt.tight_layout()
     plt.savefig('plot_revenue_change_comparison_2019_2024.png', dpi=300, bbox_inches='tight')

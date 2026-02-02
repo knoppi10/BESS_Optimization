@@ -7,3 +7,4 @@ ecos
 osqp
 scs
 python-dotenv
+tqdm

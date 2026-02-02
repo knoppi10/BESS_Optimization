@@ -28,7 +28,7 @@ class SimulationConfig:
     efficiency_discharge: Optional[float] = None
 
     c_rate: float = 0.25
-    hurdle_rate: float = 5.0  # €/MWh
+    hurdle_rate: float = 29.1  # €/MWh
     slope: float = 0.01  # α [€/(MW²·h)]
     enforce_end_soc_zero: bool = True
     debug: bool = False
